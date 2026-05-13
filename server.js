@@ -38,10 +38,9 @@ app.use(helmet({
       defaultSrc: ["'self'"],
       scriptSrc: ["'self'"],
       connectSrc: [
-        "'self'",
-        "http://127.0.0.1:3000",
-        "http://127.0.0.1:5000",
-        "http://127.0.0.1:5503"
+       "'self'",
+  process.env.CLIENT_URL,
+  process.env.AI_URL
       ],
     }
   }
@@ -61,7 +60,7 @@ app.use(cors({
 }));
 
 // ================= JSON =================
-app.use(express.json({ limit: '10kb' }));
+app.use(express.json({ limit: '1mb'  }));
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 30
@@ -720,7 +719,7 @@ app.post('/ai-request', aiLimiter, requireAuth,  csrfProtection,async (req, res)
 
   try {
 
-    const aiResponse = await axios.post("http://127.0.0.1:5000/ai", {
+    const aiResponse = await axios.post("process.env.AI_URL +/ai", {
       text,
       instructions,
       mode: "auto_ai" // fixed, not client-controlled
@@ -789,5 +788,5 @@ app.use((err, req, res, next) => {
 });
 // ================= START =================
 server.listen(port, () => {
-  console.log(`🚀 Server running on http://127.0.0.1:${port}`);
+  console.log((`🚀 Server running on port ${port}`);
 }); 
