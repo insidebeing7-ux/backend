@@ -114,11 +114,15 @@ app.use(session({
     maxAge: 1000 * 60 * 60 * 24
   }
 }));
+
+
 // ✅ PUT THIS HERE (IMPORTANT)
 // ✅ ADD THIS RIGHT AFTER SESSION
 const csrfProtection = csrf({
-  cookie: false
+  cookie: true
 });
+app.use(csrfProtection);
+
 
 // ✅ PUT THIS HERE (IMPORTANT)
 // ✅ ADD THIS RIGHT AFTER SESSION
@@ -162,7 +166,7 @@ const db = mysql.createConnection({
   user: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
   database: process.env.DB_NAME,
-  port: process.env.DB_PORT
+  port: Number(process.env.DB_PORT)
 });
 db.connect(err => {
   if (err) {
