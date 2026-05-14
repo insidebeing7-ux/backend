@@ -115,7 +115,7 @@ const csrfProtection = csrf({
   cookie: false
 });
 
-app.use(csrfProtection);
+
 
 
 // 2. PROTECTED PAGES
@@ -271,15 +271,17 @@ app.get('/user-data', requireAuth, (req, res) => {
   res.json(req.session.user);
 });
 // ================= CSRF TOKEN =================
-app.get('/csrf-token', (req, res) => {
-  try {
-    const token = req.csrfToken();
-    res.json({ csrfToken: token });
-  } catch (err) {
-    console.error("CSRF ERROR:", err);
-    res.status(500).json({ message: "CSRF token error" });
-  }
-});
+app.use(cors({
+  origin: process.env.CLIENT_URL,
+  credentials: true,
+  methods: ["GET", "POST", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "X-CSRF-Token"]
+}));
+
+app.options("*", cors({
+  origin: process.env.CLIENT_URL,
+  credentials: true
+}));
 // ================= GET USER BY USERNAME =================
 app.get('/user/:username', requireAuth, (req, res) => {
   const { username } = req.params;
