@@ -121,17 +121,13 @@ app.use(session({
 const csrfProtection = csrf({
   cookie: false
 });
-app.use(csrfProtection);
+
 
 
 // ✅ PUT THIS HERE (IMPORTANT)
 // ✅ ADD THIS RIGHT AFTER SESSION
-app.get('/csrf-token', (req, res, next) => {
-  try {
-    res.json({ csrfToken: req.csrfToken() });
-  } catch (err) {
-    next(err);
-  }
+app.get('/csrf-token', csrfProtection, (req, res) => {
+  res.json({ csrfToken: req.csrfToken() });
 });
 
 
