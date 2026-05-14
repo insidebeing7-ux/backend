@@ -111,10 +111,7 @@ const sessionStore = new MySQLStore({
 });
 
   
-  clearExpired: true,
-  checkExpirationInterval: 900000,
-  expiration: 86400000
-});
+ 
 
 app.use(session({
   key: 'chatapp.sid',
