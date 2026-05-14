@@ -93,6 +93,12 @@ const sessionStore = new MySQLStore({
   user: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
   database: process.env.DB_NAME,
+
+  ssl: {
+    ca: sslCA,
+    rejectUnauthorized: true
+  },
+
   createDatabaseTable: true,
   onError: function (error) {
     console.error("🔥 SESSION STORE ERROR:", error);
