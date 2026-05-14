@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const path = require("path");
 const app = express();
@@ -16,6 +17,9 @@ const session = require('express-session');
 const axios = require('axios');
 const http = require("http");
 const csrf = require('csurf');
+const csrfProtection = csrf({
+  cookie: false
+});
 const helmet = require("helmet");
 app.disable('x-powered-by');
 const rateLimit = require("express-rate-limit");
@@ -54,16 +58,11 @@ app.use(helmet({
 const port = process.env.PORT || 3000;
 
 
-require('dotenv').config();
+
 //////////////////////////////////////////////////////
 
 // ================= CORS =================
-app.use(cors({
-  origin: process.env.CLIENT_URL,
-  credentials: true,
-  methods: ["GET", "POST"],
-  allowedHeaders: ["Content-Type", "X-CSRF-Token"]
-}));
+
 
 // ================= JSON =================
 app.use(express.json({ limit: '1mb'  }));
@@ -118,9 +117,7 @@ app.use(session({
 // ✅ PUT THIS HERE (IMPORTANT)
 // ✅ ADD THIS RIGHT AFTER SESSION
 
-const csrfProtection = csrf({
-  cookie: false
-});
+
 // ✅ PUT THIS HERE (IMPORTANT)
 // ✅ ADD THIS RIGHT AFTER SESSION
 app.get('/csrf-token', csrfProtection, (req, res) => {
