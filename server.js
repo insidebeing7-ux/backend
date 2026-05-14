@@ -18,9 +18,7 @@ const session = require('express-session');
 const axios = require('axios');
 const http = require("http");
 const csrf = require('csurf');
-const csrfProtection = csrf({
-  cookie: false
-});
+
 const helmet = require("helmet");
 app.disable('x-powered-by');
 const rateLimit = require("express-rate-limit");
@@ -118,14 +116,19 @@ app.use(session({
 }));
 // ✅ PUT THIS HERE (IMPORTANT)
 // ✅ ADD THIS RIGHT AFTER SESSION
-
+const csrfProtection = csrf({
+  cookie: false
+});
 
 // ✅ PUT THIS HERE (IMPORTANT)
 // ✅ ADD THIS RIGHT AFTER SESSION
-app.get('/csrf-token', csrfProtection, (req, res) => {
-  res.json({ csrfToken: req.csrfToken() });
+app.get('/csrf-token', (req, res, next) => {
+  try {
+    res.json({ csrfToken: req.csrfToken() });
+  } catch (err) {
+    next(err);
+  }
 });
-
 
 
 
