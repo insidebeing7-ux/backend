@@ -223,7 +223,7 @@ app.post('/register', authLimiter, validateRegister, csrfProtection,(req, res) =
   });
 });
 // ================= LOGIN =================
-app.post('/login', loginLimiter, (req, res) => {
+app.post('/login', loginLimiter,csrfProtection, (req, res) => {
   const clean = (v) => typeof v === "string" ? v.trim() : "";
 
   const username = clean(req.body.username);
