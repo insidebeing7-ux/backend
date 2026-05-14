@@ -97,12 +97,12 @@ const sessionStore = new MySQLStore({
 app.use(session({
   key: 'chatapp.sid',
   secret: process.env.SESSION_SECRET,
-  store: sessionStore,
+  //store: sessionStore,
   resave: false,
   saveUninitialized: false,
   cookie: {
     httpOnly: true, // 🔐 prevents JS access (VERY IMPORTANT)("need to be true")
-    sameSite: 'strict', // 🔐 stronger CSRF protection
+    sameSite: 'none', // 🔐 stronger CSRF protection
     secure:process.env.NODE_ENV === "production",
      
     path: "/",   // 🔥 ADD THIS  // true in production (HTTPS)
@@ -152,9 +152,9 @@ const db = mysql.createConnection({
 db.connect(err => {
   if (err) {
     console.error('❌ MySQL connection error:', err);
-    process.exit(1);
+  } else {
+    console.log('✅ Connected to MySQL');
   }
-  console.log('✅ Connected to MySQL');
 });
 
 // ================= REGISTER =================
