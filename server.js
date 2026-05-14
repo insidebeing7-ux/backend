@@ -97,7 +97,7 @@ const sessionStore = new MySQLStore({
 app.use(session({
   key: 'chatapp.sid',
   secret: process.env.SESSION_SECRET,
-  //store: sessionStore,
+  store: sessionStore,
   resave: false,
   saveUninitialized: false,
   cookie: {
