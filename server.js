@@ -93,11 +93,15 @@ const sessionStore = new MySQLStore({
   user: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
   database: process.env.DB_NAME,
+  port: Number(process.env.DB_PORT),
 
   ssl: {
     ca: sslCA,
-    rejectUnauthorized: true
+    rejectUnauthorized: false
   },
+
+  connectTimeout: 10000
+});
 
   createDatabaseTable: true,
   onError: function (error) {
