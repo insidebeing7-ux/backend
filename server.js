@@ -164,8 +164,8 @@ const db = mysql.createConnection({
   database: process.env.DB_NAME,
   port: Number(process.env.DB_PORT),
    ssl: {
-    ca: require('fs').readFileSync('./ca.pem')
-  }
+  rejectUnauthorized: false
+}
      });
 db.connect(err => {
   if (err) {
