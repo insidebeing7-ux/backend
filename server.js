@@ -119,7 +119,7 @@ app.use(session({
 // ✅ PUT THIS HERE (IMPORTANT)
 // ✅ ADD THIS RIGHT AFTER SESSION
 const csrfProtection = csrf({
-  cookie: true
+  cookie: false
 });
 app.use(csrfProtection);
 
