@@ -120,7 +120,7 @@ app.use(session({
 
 // ✅ PUT THIS HERE (IMPORTANT)
 // ✅ ADD THIS RIGHT AFTER SESSION
-app.get('/csrf-token', csrfProtection, (req, res) => {
+app.get('/csrf-token',(req, res) => {
   res.json({ csrfToken: req.csrfToken() });
 });
 
