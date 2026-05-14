@@ -1,5 +1,6 @@
 require('dotenv').config();
 const express = require('express');
+const cors = require('cors');
 const path = require("path");
 const app = express();
 app.use(cors({
@@ -12,7 +13,7 @@ app.set('trust proxy', 1);
 app.use("/app", express.static(path.join(__dirname, "protected")));
 const mysql = require('mysql2');
 const bcrypt = require('bcryptjs');
-const cors = require('cors');
+
 const session = require('express-session');
 const axios = require('axios');
 const http = require("http");
@@ -114,13 +115,14 @@ app.use(session({
     maxAge: 1000 * 60 * 60 * 24
   }
 }));
+app.use(csrfProtection);
 // ✅ PUT THIS HERE (IMPORTANT)
 // ✅ ADD THIS RIGHT AFTER SESSION
 
 
 // ✅ PUT THIS HERE (IMPORTANT)
 // ✅ ADD THIS RIGHT AFTER SESSION
-app.get('/csrf-token',(req, res) => {
+app.get('/csrf-token', (req, res) => {
   res.json({ csrfToken: req.csrfToken() });
 });
 
@@ -720,7 +722,7 @@ app.post('/ai-request', aiLimiter, requireAuth,  csrfProtection,async (req, res)
 
   try {
 
-    const aiResponse = await axios.post("process.env.AI_URL +/ai", {
+    const aiResponse = await axios.post(`${process.env.AI_URL}/ai`, {
       text,
       instructions,
       mode: "auto_ai" // fixed, not client-controlled
