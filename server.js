@@ -18,6 +18,7 @@ const session = require('express-session');
 const axios = require('axios');
 const http = require("http");
 const fs = require("fs");
+const sslCA = fs.readFileSync("./ca.pem");
 const csrf = require('csurf');
 const csrfProtection = csrf({
   cookie: false
@@ -162,7 +163,9 @@ const db = mysql.createConnection({
   database: process.env.DB_NAME,
   port: Number(process.env.DB_PORT),
   ssl: {
-  ca: require('fs').readFileSync('./ca.pem')
+  ca: sslCA,
+  rejectUnauthorized: true
+    
 }
 });
 db.connect(err => {
