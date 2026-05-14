@@ -117,11 +117,14 @@ app.use(session({
 }));
 // ✅ PUT THIS HERE (IMPORTANT)
 // ✅ ADD THIS RIGHT AFTER SESSION
-app.get('/csrf-token', csrfProtection, (req, res) => {
-  res.json({ csrfToken: req.csrfToken() });
-});
+
 const csrfProtection = csrf({
   cookie: false
+});
+// ✅ PUT THIS HERE (IMPORTANT)
+// ✅ ADD THIS RIGHT AFTER SESSION
+app.get('/csrf-token', csrfProtection, (req, res) => {
+  res.json({ csrfToken: req.csrfToken() });
 });
 
 
