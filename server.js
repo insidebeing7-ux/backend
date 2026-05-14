@@ -110,10 +110,7 @@ const sessionStore = new MySQLStore({
   }
 });
 
-  createDatabaseTable: true,
-  onError: function (error) {
-    console.error("🔥 SESSION STORE ERROR:", error);
-  },
+  
   clearExpired: true,
   checkExpirationInterval: 900000,
   expiration: 86400000
