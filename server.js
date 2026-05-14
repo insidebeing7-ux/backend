@@ -100,6 +100,7 @@ const sessionStore = new MySQLStore({
   expiration: 86400000
 });
 
+
 app.use(session({
   key: 'chatapp.sid',
   secret: process.env.SESSION_SECRET,
@@ -115,14 +116,13 @@ app.use(session({
     maxAge: 1000 * 60 * 60 * 24
   }
 }));
-app.use(csrfProtection);
 // ✅ PUT THIS HERE (IMPORTANT)
 // ✅ ADD THIS RIGHT AFTER SESSION
 
 
 // ✅ PUT THIS HERE (IMPORTANT)
 // ✅ ADD THIS RIGHT AFTER SESSION
-app.get('/csrf-token', (req, res) => {
+app.get('/csrf-token', csrfProtection, (req, res) => {
   res.json({ csrfToken: req.csrfToken() });
 });
 
