@@ -100,15 +100,14 @@ const sessionStore = new MySQLStore({
     rejectUnauthorized: false
   },
 
-  connectTimeout: 10000,
-
   createDatabaseTable: true,
+  checkExpirationInterval: 900000,
+  expiration: 86400000,
+  clearExpired: true,
+
   onError: function (error) {
     console.error("🔥 SESSION STORE ERROR:", error);
-  },
-  clearExpired: true,
-  checkExpirationInterval: 900000,
-  expiration: 86400000
+  }
 });
 
   createDatabaseTable: true,
