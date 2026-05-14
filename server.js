@@ -1,6 +1,12 @@
 const express = require('express');
 const path = require("path");
 const app = express();
+app.use(cors({
+  origin: process.env.CLIENT_URL,
+  credentials: true,
+  methods: ["GET", "POST"],
+  allowedHeaders: ["Content-Type", "X-CSRF-Token"]
+}));
 app.set('trust proxy', 1);
 app.use("/app", express.static(path.join(__dirname, "protected")));
 const mysql = require('mysql2');
@@ -110,7 +116,10 @@ app.use(session({
   }
 }));
 // ✅ PUT THIS HERE (IMPORTANT)
-
+// ✅ ADD THIS RIGHT AFTER SESSION
+app.get('/csrf-token', csrfProtection, (req, res) => {
+  res.json({ csrfToken: req.csrfToken() });
+});
 const csrfProtection = csrf({
   cookie: false
 });
@@ -271,17 +280,7 @@ app.get('/user-data', requireAuth, (req, res) => {
   res.json(req.session.user);
 });
 // ================= CSRF TOKEN =================
-app.use(cors({
-  origin: process.env.CLIENT_URL,
-  credentials: true,
-  methods: ["GET", "POST", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "X-CSRF-Token"]
-}));
 
-app.options("*", cors({
-  origin: process.env.CLIENT_URL,
-  credentials: true
-}));
 // ================= GET USER BY USERNAME =================
 app.get('/user/:username', requireAuth, (req, res) => {
   const { username } = req.params;
