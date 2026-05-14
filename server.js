@@ -788,5 +788,5 @@ app.use((err, req, res, next) => {
 });
 // ================= START =================
 server.listen(port, () => {
-  console.log((`🚀 Server running on port ${port}`);
+  console.log(`🚀 Server running on port ${port}`);
 }); 
