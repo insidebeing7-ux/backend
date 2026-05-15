@@ -26,9 +26,9 @@ window.addEventListener("DOMContentLoaded", () => {
   },
   credentials: "include",
   body: JSON.stringify({
-    text: text,
-    receiver_id: window.receiver_id
-  })
+  content: text,
+  receiver_id: window.receiver_id
+})
 });
       // 🔥 ADD THIS RIGHT HERE
 if (!res.ok) {
