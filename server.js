@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const path = require("path");
 const app = express();
@@ -47,7 +48,7 @@ app.use(helmet({
 const port = process.env.PORT || 3000;
 
 
-require('dotenv').config();
+
 //////////////////////////////////////////////////////
 
 // ================= CORS =================
@@ -145,7 +146,8 @@ const db = mysql.createConnection({
   host: process.env.DB_HOST,
   user: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME
+  database: process.env.DB_NAME,
+  connectTimeout: 10000
 });
 db.connect(err => {
   if (err) {
@@ -785,6 +787,6 @@ app.use((err, req, res, next) => {
   next(err);
 });
 // ================= START =================
-server.listen(port, () => {
-  console.log(`🚀 Server running on http://127.0.0.1:${port}`);
-});  
+server.listen(port, "0.0.0.0", () => {
+  console.log(`🚀 Server running on port ${port}`);
+});
