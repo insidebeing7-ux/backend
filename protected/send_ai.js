@@ -54,12 +54,15 @@ if (!data?.reply || typeof data.reply !== "string") {
   return;
 }
 
-      const box = document.getElementById("aiReplyBox");
+      
 
 box.style.display = "block";
 box.innerHTML = "";
 
-const lines = (data.reply || "").split("\n").filter(l => l.trim());
+onst lines = (data.reply || "")
+  .split(/\n|•|,/)
+  .map(l => l.trim())
+  .filter(Boolean);
 
 lines.forEach(line => {
   const btn = document.createElement("button");
