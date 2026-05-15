@@ -1,28 +1,15 @@
-require('dotenv').config();
 const express = require('express');
-const cors = require('cors');
 const path = require("path");
 const app = express();
-app.use(cors({
-  origin: process.env.CLIENT_URL,
-  credentials: true,
-  methods: ["GET", "POST"],
-  allowedHeaders: ["Content-Type", "X-CSRF-Token"]
-}));
 app.set('trust proxy', 1);
 app.use("/app", express.static(path.join(__dirname, "protected")));
 const mysql = require('mysql2');
 const bcrypt = require('bcryptjs');
-
+const cors = require('cors');
 const session = require('express-session');
 const axios = require('axios');
 const http = require("http");
-const fs = require("fs");
-const sslCA = fs.readFileSync("./ca.pem");
 const csrf = require('csurf');
-const csrfProtection = csrf({
-  cookie: false
-});
 const helmet = require("helmet");
 app.disable('x-powered-by');
 const rateLimit = require("express-rate-limit");
@@ -51,9 +38,10 @@ app.use(helmet({
       defaultSrc: ["'self'"],
       scriptSrc: ["'self'"],
       connectSrc: [
-       "'self'",
-  process.env.CLIENT_URL,
-  process.env.AI_URL
+        "'self'",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:5000",
+        "http://127.0.0.1:5503"
       ],
     }
   }
@@ -61,14 +49,19 @@ app.use(helmet({
 const port = process.env.PORT || 3000;
 
 
-
+require('dotenv').config();
 //////////////////////////////////////////////////////
 
 // ================= CORS =================
-
+app.use(cors({
+  origin: process.env.CLIENT_URL,
+  credentials: true,
+  methods: ["GET", "POST"],
+  allowedHeaders: ["Content-Type", "X-CSRF-Token"]
+}));
 
 // ================= JSON =================
-app.use(express.json({ limit: '1mb'  }));
+app.use(express.json({ limit: '10kb' }));
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 30
@@ -93,25 +86,14 @@ const sessionStore = new MySQLStore({
   user: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
   database: process.env.DB_NAME,
-  port: Number(process.env.DB_PORT),
-
-  ssl: {
-    ca: sslCA,
-    rejectUnauthorized: false
-  },
-
   createDatabaseTable: true,
-  checkExpirationInterval: 900000,
-  expiration: 86400000,
-  clearExpired: true,
-
   onError: function (error) {
     console.error("🔥 SESSION STORE ERROR:", error);
-  }
+  },
+  clearExpired: true,
+  checkExpirationInterval: 900000,
+  expiration: 86400000
 });
-
-  
- 
 
 app.use(session({
   key: 'chatapp.sid',
@@ -121,25 +103,20 @@ app.use(session({
   saveUninitialized: false,
   cookie: {
     httpOnly: true, // 🔐 prevents JS access (VERY IMPORTANT)("need to be true")
-    sameSite: 'none', // 🔐 stronger CSRF protection
+    sameSite: 'strict', // 🔐 stronger CSRF protection
     secure:process.env.NODE_ENV === "production",
      
     path: "/",   // 🔥 ADD THIS  // true in production (HTTPS)
     maxAge: 1000 * 60 * 60 * 24
   }
 }));
-app.use(csrfProtection);
 // ✅ PUT THIS HERE (IMPORTANT)
-// ✅ ADD THIS RIGHT AFTER SESSION
 
-
-// ✅ PUT THIS HERE (IMPORTANT)
-// ✅ ADD THIS RIGHT AFTER SESSION
-app.get('/csrf-token', (req, res) => {
-  res.json({ csrfToken: req.csrfToken() });
+const csrfProtection = csrf({
+  cookie: false
 });
 
-
+app.use(csrfProtection);
 
 
 // 2. PROTECTED PAGES
@@ -171,20 +148,14 @@ const db = mysql.createConnection({
   host: process.env.DB_HOST,
   user: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME,
-  port: Number(process.env.DB_PORT),
-  ssl: {
-  ca: sslCA,
-  rejectUnauthorized: true
-    
-}
+  database: process.env.DB_NAME
 });
 db.connect(err => {
   if (err) {
     console.error('❌ MySQL connection error:', err);
-  } else {
-    console.log('✅ Connected to MySQL');
+    process.exit(1);
   }
+  console.log('✅ Connected to MySQL');
 });
 
 // ================= REGISTER =================
@@ -253,7 +224,7 @@ app.post('/register', authLimiter, validateRegister, csrfProtection,(req, res) =
   });
 });
 // ================= LOGIN =================
-app.post('/login', loginLimiter,csrfProtection, (req, res) => {
+app.post('/login', loginLimiter, (req, res) => {
   const clean = (v) => typeof v === "string" ? v.trim() : "";
 
   const username = clean(req.body.username);
@@ -301,7 +272,15 @@ app.get('/user-data', requireAuth, (req, res) => {
   res.json(req.session.user);
 });
 // ================= CSRF TOKEN =================
-
+app.get('/csrf-token', (req, res) => {
+  try {
+    const token = req.csrfToken();
+    res.json({ csrfToken: token });
+  } catch (err) {
+    console.error("CSRF ERROR:", err);
+    res.status(500).json({ message: "CSRF token error" });
+  }
+});
 // ================= GET USER BY USERNAME =================
 app.get('/user/:username', requireAuth, (req, res) => {
   const { username } = req.params;
@@ -436,7 +415,7 @@ if (receiver_id === sender_id) {
           return res.status(500).json({ message: 'Error sending message' });
         }
 
-        res.json({ reply: aiReply });  // 👈 THIS LINE
+        res.json({ message: 'Sent' });
       }
     );
 
@@ -530,7 +509,7 @@ app.post('/ai-send', aiLimiter, requireAuth, perUserRateLimit,csrfProtection, as
   instructions: finalInstructions,
   context: context || []
 }, {
-  timeout: 15000   
+  timeout: 3000
 });
 
     let aiReply = aiResponse.data.reply;
@@ -587,14 +566,10 @@ if (lastMessage) {
       }
     );
 
- } catch (err) {
-  console.error("🔥 AI REQUEST FAILED:", err.response?.data || err.message);
-
-  return res.status(500).json({
-    message: "AI error",
-    detail: err.response?.data || err.message
-  });
-}
+  } catch (err) {
+    console.error("🔥 AI ERROR:", err.message);
+    res.status(500).json({ message: 'AI service error' });
+  }
 });
 /////////////////////////////////////////////////////////
 app.get('/conversations', requireAuth, (req, res) => {
@@ -745,12 +720,12 @@ app.post('/ai-request', aiLimiter, requireAuth,  csrfProtection,async (req, res)
 
   try {
 
-    const aiResponse = await axios.post(`${process.env.AI_URL}/ai`, {
+    const aiResponse = await axios.post("http://127.0.0.1:5000/ai", {
       text,
       instructions,
       mode: "auto_ai" // fixed, not client-controlled
     }, {
-      timeout: 15000
+      timeout: 3000
     });
 
     const reply = aiResponse.data.reply || "";
@@ -814,5 +789,5 @@ app.use((err, req, res, next) => {
 });
 // ================= START =================
 server.listen(port, () => {
-  console.log(`🚀 Server running on port ${port}`);
-}); 
+  console.log(`🚀 Server running on http://127.0.0.1:${port}`);
+});  
