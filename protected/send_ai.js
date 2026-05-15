@@ -60,7 +60,7 @@ box.style.display = "block";
 box.innerHTML = "";
 
 const lines = (data.reply || "")
-  .split(/\n|•|,/)
+  const lines = data.reply;
   .map(l => l.trim())
   .filter(Boolean);
 
