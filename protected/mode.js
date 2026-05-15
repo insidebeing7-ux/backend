@@ -26,7 +26,7 @@ window.aiMode = {
 
   const csrfToken = await getCSRF();
 
- const res = await fetch("/set-ai-mode", {
+ const res = await fetch("https://backend-1-liqz.onrender.com/set-ai-mode", {
   method: "POST",
   headers: {
     "Content-Type": "application/json",
