@@ -750,7 +750,7 @@ app.post('/ai-request', aiLimiter, requireAuth,  csrfProtection,async (req, res)
       instructions,
       mode: "auto_ai" // fixed, not client-controlled
     }, {
-      timeout: 3000
+      timeout: 15000
     });
 
     const reply = aiResponse.data.reply || "";
