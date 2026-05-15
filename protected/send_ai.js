@@ -2,7 +2,7 @@ window.addEventListener("DOMContentLoaded", () => {
 
   const input = document.getElementById("aiInput");
   const box = document.getElementById("aiReplyBox");
-  const btn = document.getElementById("sendAiBtn");
+  const sendBtn = document.getElementById("sendAiBtn");
 
   async function sendToAI() {
     if (!input || !box) return;
@@ -60,7 +60,7 @@ box.style.display = "block";
 box.innerHTML = "";
 
 const lines = (data.reply || "")
-  const lines = data.reply;
+  .split("\n")
   .map(l => l.trim())
   .filter(Boolean);
 
