@@ -3,9 +3,9 @@ window.aiMode = {
   instructions: "",
 
   async load() {
-    const res = await fetch("/get-ai-mode", {
-      credentials: "include"
-    });
+    const res = await fetch("https://backend-1-liqz.onrender.com/get-ai-mode", {
+  credentials: "include"
+});
      if (!res.ok) {
     const err = await res.json();
     window.showError(err.message);
