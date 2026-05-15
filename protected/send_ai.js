@@ -18,7 +18,7 @@ window.addEventListener("DOMContentLoaded", () => {
     box.innerText = "Thinking...";
 
     try {
-      const res = await fetch("/ai", {
+      const res =  await fetch("/ai-send", {
   method: "POST",
   headers: {
     "Content-Type": "application/json",
