@@ -59,7 +59,7 @@ if (!data?.reply || typeof data.reply !== "string") {
 box.style.display = "block";
 box.innerHTML = "";
 
-onst lines = (data.reply || "")
+const lines = (data.reply || "")
   .split(/\n|•|,/)
   .map(l => l.trim())
   .filter(Boolean);
