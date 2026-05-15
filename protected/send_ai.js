@@ -18,7 +18,7 @@ window.addEventListener("DOMContentLoaded", () => {
     box.innerText = "Thinking...";
 
     try {
-      const res = await fetch("/ai-request", {
+      const res = await fetch("https://chatflow-ai-1.onrender.com/ai-request", {
   method: "POST",
   headers: {
     "Content-Type": "application/json",
@@ -106,7 +106,7 @@ async function sendAIMessage(text) {
 
   const csrfToken = await getCSRF();
 
-  const res = await fetch("/ai-send", {
+  const res = await fetch("https://chatflow-ai-1.onrender.com/ai-send", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
