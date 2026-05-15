@@ -13,7 +13,7 @@ const csrfToken = await getCSRF();
 
 
 
-await fetch("http://127.0.0.1:3000/send", {
+await fetch("https://backend-1-liqz.onrender.com/send", {
   method: "POST",
   headers: {
     "Content-Type": "application/json",
