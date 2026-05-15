@@ -530,7 +530,7 @@ app.post('/ai-send', aiLimiter, requireAuth, perUserRateLimit,csrfProtection, as
   instructions: finalInstructions,
   context: context || []
 }, {
-  timeout: 3000
+  timeout: 15000   
 });
 
     let aiReply = aiResponse.data.reply;
@@ -587,10 +587,14 @@ if (lastMessage) {
       }
     );
 
-  } catch (err) {
-    console.error("🔥 AI ERROR:", err.message);
-    res.status(500).json({ message: 'AI service error' });
-  }
+ } catch (err) {
+  console.error("🔥 AI REQUEST FAILED:", err.response?.data || err.message);
+
+  return res.status(500).json({
+    message: "AI error",
+    detail: err.response?.data || err.message
+  });
+}
 });
 /////////////////////////////////////////////////////////
 app.get('/conversations', requireAuth, (req, res) => {
