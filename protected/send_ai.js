@@ -2,7 +2,7 @@ window.addEventListener("DOMContentLoaded", () => {
 
   const input = document.getElementById("aiInput");
   const box = document.getElementById("aiReplyBox");
-  const sendBtn = document.getElementById("sendAiBtn");
+  const btn = document.getElementById("sendAiBtn");
 
   async function sendToAI() {
     if (!input || !box) return;
@@ -18,7 +18,7 @@ window.addEventListener("DOMContentLoaded", () => {
     box.innerText = "Thinking...";
 
     try {
-      const res =  await fetch("/ai-send", {
+      const res = await fetch("/ai-request", {
   method: "POST",
   headers: {
     "Content-Type": "application/json",
@@ -26,9 +26,9 @@ window.addEventListener("DOMContentLoaded", () => {
   },
   credentials: "include",
   body: JSON.stringify({
-  content: text,
-  receiver_id: window.receiver_id
-})
+    text: text,
+    receiver_id: window.receiver_id
+  })
 });
       // 🔥 ADD THIS RIGHT HERE
 if (!res.ok) {
@@ -54,15 +54,12 @@ if (!data?.reply || typeof data.reply !== "string") {
   return;
 }
 
-      
+      const box = document.getElementById("aiReplyBox");
 
 box.style.display = "block";
 box.innerHTML = "";
 
-const lines = (data.reply || "")
-  .split("\n")
-  .map(l => l.trim())
-  .filter(Boolean);
+const lines = (data.reply || "").split("\n").filter(l => l.trim());
 
 lines.forEach(line => {
   const btn = document.createElement("button");
@@ -90,8 +87,8 @@ lines.forEach(line => {
   }
 
   // IMPORTANT: attach click safely
-  if (sendBtn) {
-    sendBtn.addEventListener("click", sendToAI);
+  if (btn) {
+    btn.addEventListener("click", sendToAI);
   }
 
   // optional: Enter key support
