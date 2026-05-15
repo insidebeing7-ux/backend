@@ -38,11 +38,9 @@ app.use(helmet({
       defaultSrc: ["'self'"],
       scriptSrc: ["'self'"],
       connectSrc: [
-        "'self'",
-        "http://127.0.0.1:3000",
-        "http://127.0.0.1:5000",
-        "http://127.0.0.1:5503"
-      ],
+  "'self'",
+  process.env.CLIENT_URL
+],
     }
   }
 }));
@@ -102,13 +100,12 @@ app.use(session({
   resave: false,
   saveUninitialized: false,
   cookie: {
-    httpOnly: true, // 🔐 prevents JS access (VERY IMPORTANT)("need to be true")
-    sameSite: 'strict', // 🔐 stronger CSRF protection
-    secure:process.env.NODE_ENV === "production",
-     
-    path: "/",   // 🔥 ADD THIS  // true in production (HTTPS)
-    maxAge: 1000 * 60 * 60 * 24
-  }
+  httpOnly: true,
+  sameSite: "none",
+  secure: true,
+  path: "/",
+  maxAge: 1000 * 60 * 60 * 24
+}
 }));
 // ✅ PUT THIS HERE (IMPORTANT)
 
@@ -720,7 +717,7 @@ app.post('/ai-request', aiLimiter, requireAuth,  csrfProtection,async (req, res)
 
   try {
 
-    const aiResponse = await axios.post("http://127.0.0.1:5000/ai", {
+    const aiResponse = await axios.post(process.env.AI_URL + "/ai", {
       text,
       instructions,
       mode: "auto_ai" // fixed, not client-controlled
