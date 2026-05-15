@@ -436,7 +436,7 @@ if (receiver_id === sender_id) {
           return res.status(500).json({ message: 'Error sending message' });
         }
 
-        res.json({ message: 'Sent' });
+        res.json({ reply: aiReply });  // 👈 THIS LINE
       }
     );
 
