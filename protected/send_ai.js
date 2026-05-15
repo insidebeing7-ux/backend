@@ -90,8 +90,8 @@ lines.forEach(line => {
   }
 
   // IMPORTANT: attach click safely
-  if (btn) {
-    btn.addEventListener("click", sendToAI);
+  if (sendBtn) {
+    sendBtn.addEventListener("click", sendToAI);
   }
 
   // optional: Enter key support
