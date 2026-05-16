@@ -18,7 +18,7 @@ window.addEventListener("DOMContentLoaded", () => {
     box.innerText = "Thinking...";
 
     try {
-      const res = await fetch("https://chatflow-ai-1.onrender.com/ai-request", {
+      const res = await fetch("https://backend-1-liqz.onrender.com/ai-request", {
   method: "POST",
   headers: {
     "Content-Type": "application/json",
