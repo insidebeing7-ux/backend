@@ -735,7 +735,7 @@ app.post('/ai-request', aiLimiter, requireAuth,  csrfProtection,async (req, res)
       instructions,
        mode: req.body.mode || "chat"
     }, {
-      timeout: 3000
+      timeout: 15000
     });
 
     const reply = aiResponse.data.reply || "";
