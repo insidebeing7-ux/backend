@@ -743,8 +743,9 @@ app.post('/ai-request', aiLimiter, requireAuth,  csrfProtection,async (req, res)
     res.json({ reply });
 
   } catch (err) {
-    return res.status(500).json({ message: "AI error" });
-  }
+  console.error("AI REQUEST ERROR:", err?.response?.data || err.message);
+  return res.status(500).json({ message: "AI error", detail: err.message });
+
 });
 //////////////////////////////////////////////////
 app.get('/get-auto-ai',  requireAuth,(req, res) => {
