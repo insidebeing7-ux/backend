@@ -733,7 +733,7 @@ app.post('/ai-request', aiLimiter, requireAuth,  csrfProtection,async (req, res)
     const aiResponse = await axios.post(process.env.AI_URL + "/ai", {
       text,
       instructions,
-      mode: "auto_ai" // fixed, not client-controlled
+       mode: req.body.mode || "chat"
     }, {
       timeout: 3000
     });
