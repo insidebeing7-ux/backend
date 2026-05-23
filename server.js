@@ -792,10 +792,7 @@ io.on("connection", (socket) => {
     socket.join(socket.userId);
 
   });
-  socket.on("end-call", (data) => {
-  io.to(String(data.to)).emit("call-ended");
-});
-
+ 
   let activeCalls = new Map(); // key: room between 2 users
 
 function getRoom(a, b) {
