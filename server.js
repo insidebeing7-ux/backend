@@ -789,6 +789,7 @@ io.on("connection", (socket) => {
   console.log("🔌 User connected:", socket.id);
 
   socket.on("join", (userId) => {
+    console.log("JOIN EVENT:", userId, "socket:", socket.id);
 
     socket.userId = String(userId);
 
@@ -823,10 +824,8 @@ socket.on("call-user", (data) => {
 
   console.log("SENDING incoming-call TO:", data.to);
 
-  io.to(String(data.to)).emit("incoming-call", {
-    from: socket.userId,
-    offer: data.offer
-  });
+  const targetRoom = String(data.to);
+  console.log("EMIT incoming-call to:", targetRoom);;
 
 });
 socket.on("end-call", (data) => {
