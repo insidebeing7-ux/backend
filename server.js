@@ -822,10 +822,12 @@ socket.on("call-user", (data) => {
 
   activeCalls.set(room, true);
 
-  console.log("SENDING incoming-call TO:", data.to);
+  console.log("EMIT incoming-call to:", data.to);
 
-  const targetRoom = String(data.to);
-  console.log("EMIT incoming-call to:", targetRoom);;
+  io.to(String(data.to)).emit("incoming-call", {
+    from: socket.userId,
+    offer: data.offer
+  });
 
 });
 socket.on("end-call", (data) => {
