@@ -804,27 +804,29 @@ function getRoom(a, b) {
 }
 
 socket.on("call-user", (data) => {
+
   console.log("CALL REQUEST FROM:", socket.userId);
-console.log("CALL REQUEST TO:", data.to);
+  console.log("CALL REQUEST TO:", data.to);
 
   const room = getRoom(socket.userId, String(data.to));
 
   if (activeCalls.has(room)) {
-    socket.emit("call-rejected", { message: "Call already active" });
+    socket.emit("call-rejected", {
+      message: "Call already active"
+    });
     return;
   }
 
   activeCalls.set(room, true);
 
+  console.log("SENDING incoming-call TO:", data.to);
+
   io.to(String(data.to)).emit("incoming-call", {
-    console.log("SENDING incoming-call TO:", data.to);
+    from: socket.userId,
+    offer: data.offer
+  });
 
-io.to(String(data.to)).emit("incoming-call", {
-  from: socket.userId,
-  offer: data.offer
 });
-});
-
 socket.on("end-call", (data) => {
 
   const room = getRoom(socket.userId, String(data.to));
