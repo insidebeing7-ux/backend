@@ -796,14 +796,38 @@ io.on("connection", (socket) => {
   io.to(String(data.to)).emit("call-ended");
 });
 
-  socket.on("call-user", (data) => {
+  let activeCalls = new Map(); // key: room between 2 users
 
-    io.to(String(data.to)).emit("incoming-call", {
-      from: socket.userId,
-      offer: data.offer
-    });
+function getRoom(a, b) {
+  return [a, b].sort().join("-");
+}
 
+socket.on("call-user", (data) => {
+
+  const room = getRoom(socket.userId, String(data.to));
+
+  if (activeCalls.has(room)) {
+    socket.emit("call-rejected", { message: "Call already active" });
+    return;
+  }
+
+  activeCalls.set(room, true);
+
+  io.to(String(data.to)).emit("incoming-call", {
+    from: socket.userId,
+    offer: data.offer
   });
+});
+
+socket.on("end-call", (data) => {
+
+  const room = getRoom(socket.userId, String(data.to));
+
+  activeCalls.delete(room);
+
+  io.to(String(data.to)).emit("call-ended");
+  socket.emit("call-ended");
+});
 
   socket.on("answer-call", (data) => {
 
