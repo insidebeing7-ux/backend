@@ -781,6 +781,7 @@ const io = new Server(server, {
   },
   transports: ["websocket", "polling"]
 });
+let activeCalls = new Map();
 io.on("connection", (socket) => {
 
   console.log("🔌 User connected:", socket.id);
@@ -791,15 +792,20 @@ io.on("connection", (socket) => {
 
     socket.join(socket.userId);
 
+   console.log("USER JOINED:", socket.userId);
+   console.log("ROOMS:", socket.rooms);
+
   });
  
-  let activeCalls = new Map(); // key: room between 2 users
+   // key: room between 2 users
 
 function getRoom(a, b) {
   return [a, b].sort().join("-");
 }
 
 socket.on("call-user", (data) => {
+  console.log("CALL REQUEST FROM:", socket.userId);
+console.log("CALL REQUEST TO:", data.to);
 
   const room = getRoom(socket.userId, String(data.to));
 
@@ -811,6 +817,7 @@ socket.on("call-user", (data) => {
   activeCalls.set(room, true);
 
   io.to(String(data.to)).emit("incoming-call", {
+    console.log("SENDING incoming-call TO:", data.to);
     from: socket.userId,
     offer: data.offer
   });
