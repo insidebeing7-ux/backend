@@ -42,7 +42,7 @@ app.use(helmet({
   "'self'",
   process.env.CLIENT_URL,
   "https://chatflow-ai-1.onrender.com",
-  "wss://chatflow-ai-1.onrender.com"
+ "wss://chatflow-ai-1.onrender.com"
 ],
     }
   }
