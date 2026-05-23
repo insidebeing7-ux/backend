@@ -818,9 +818,11 @@ console.log("CALL REQUEST TO:", data.to);
 
   io.to(String(data.to)).emit("incoming-call", {
     console.log("SENDING incoming-call TO:", data.to);
-    from: socket.userId,
-    offer: data.offer
-  });
+
+io.to(String(data.to)).emit("incoming-call", {
+  from: socket.userId,
+  offer: data.offer
+});
 });
 
 socket.on("end-call", (data) => {
