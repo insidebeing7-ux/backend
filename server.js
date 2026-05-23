@@ -40,7 +40,9 @@ app.use(helmet({
       scriptSrc: ["'self'"],
       connectSrc: [
   "'self'",
-  process.env.CLIENT_URL
+  process.env.CLIENT_URL,
+  "https://chatflow-ai-1.onrender.com",
+  "wss://chatflow-ai-1.onrender.com"
 ],
     }
   }
