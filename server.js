@@ -792,6 +792,9 @@ io.on("connection", (socket) => {
     socket.join(socket.userId);
 
   });
+  socket.on("end-call", (data) => {
+  io.to(String(data.to)).emit("call-ended");
+});
 
   socket.on("call-user", (data) => {
 
