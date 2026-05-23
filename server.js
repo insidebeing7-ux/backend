@@ -781,15 +781,52 @@ const io = new Server(server, {
   }
 });
 io.on("connection", (socket) => {
+
   console.log("🔌 User connected:", socket.id);
 
   socket.on("join", (userId) => {
-    socket.join(userId);
+
+    socket.userId = String(userId);
+
+    socket.join(socket.userId);
+
+  });
+
+  socket.on("call-user", (data) => {
+
+    io.to(String(data.to)).emit("incoming-call", {
+      from: socket.userId,
+      offer: data.offer
+    });
+
+  });
+
+  socket.on("answer-call", (data) => {
+
+    io.to(String(data.to)).emit("call-answered", {
+      answer: data.answer
+    });
+
+  });
+
+  socket.on("ice-candidate", (data) => {
+
+    io.to(String(data.to)).emit("ice-candidate", {
+      candidate: data.candidate
+    });
+
+  });
+
+  socket.on("decline-call", (data) => {
+
+    io.to(String(data.to)).emit("call-declined");
+
   });
 
   socket.on("disconnect", () => {
     console.log("❌ Disconnected:", socket.id);
   });
+
 });
 
 app.use((err, req, res, next) => {
