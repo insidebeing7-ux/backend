@@ -824,10 +824,15 @@ socket.on("call-user", (data) => {
 
   console.log("EMIT incoming-call to:", data.to);
 
-  io.to(String(data.to)).emit("incoming-call", {
-    from: socket.userId,
-    offer: data.offer
-  });
+  if (!data.offer) {
+  console.log("❌ No offer received — rejecting call");
+  return;
+}
+
+io.to(String(data.to)).emit("incoming-call", {
+  from: socket.userId,
+  offer: data.offer
+});
 
 });
 socket.on("end-call", (data) => {
