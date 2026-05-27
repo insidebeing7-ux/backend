@@ -752,12 +752,12 @@ app.post('/ai-request', aiLimiter, requireAuth, csrfProtection, async (req, res)
     });
 
   } catch (err) {
-    console.error("AI REQUEST ERROR:", err?.response?.data || err.message);
+    console.error("AI REQUEST ERROR FULL:", err);
 
-    return res.status(500).json({
-      message: "AI error",
-      detail: err?.response?.data || err.message
-    });
+return res.status(500).json({
+  message: "AI error",
+  detail: err?.response?.data || err.message
+});
   }
 });
 //////////////////////////////////////////////////
