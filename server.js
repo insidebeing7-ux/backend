@@ -721,49 +721,55 @@ app.post('/toggle-auto-ai', requireAuth, csrfProtection, (req, res) => {
   );
 });
 ///////////////////////////////////////////////////
-app.post('/ai-request', aiLimiter, requireAuth,  csrfProtection,async (req, res) => {
-
+app.post('/ai-request', aiLimiter, requireAuth, csrfProtection, async (req, res) => {
   const userId = req.session.user.id;
+
   let { text, receiver_id } = req.body;
 
-  // 🔐 validate input
   if (typeof text !== "string") {
     return res.status(400).json({ message: "Invalid input" });
   }
 
   text = text.trim().slice(0, 2000);
 
-  // 🔐 enforce AI mode from SERVER ONLY
   const instructions = req.session.aiMode || "";
 
-  try {
+  async function callAIWithRetry(payload, retries = 2) {
+    for (let i = 0; i <= retries; i++) {
+      try {
+        return await axios.post(process.env.AI_URL + "/ai", payload, {
+          timeout: 25000
+        });
+      } catch (err) {
+        const isLast = i === retries;
+        const retryable =
+          err.code === "ECONNABORTED" ||
+          err.response?.status >= 500;
 
-    async function callAIWithRetry(payload, retries = 2) {
-  for (let i = 0; i <= retries; i++) {
-    try {
-      return await axios.post(process.env.AI_URL + "/ai", payload, {
-        timeout: 25000
-      });
-    } catch (err) {
-      const isLast = i === retries;
-      const retryable =
-        err.code === "ECONNABORTED" ||
-        err.response?.status >= 500;
+        if (!retryable || isLast) throw err;
 
-      if (!retryable || isLast) throw err;
-
-      await new Promise(r => setTimeout(r, 800)); // small delay before retry
+        await new Promise(r => setTimeout(r, 800));
+      }
     }
   }
-}
+
+  try {
+    const aiResponse = await callAIWithRetry({
+      text,
+      instructions,
+      mode: "chat"
+    });
 
     const reply = aiResponse.data.reply || "";
 
-    res.json({ reply });
+    return res.json({ reply });
 
   } catch (err) {
-  console.error("AI REQUEST ERROR:", err?.response?.data || err.message);
-  return res.status(500).json({ message: "AI error", detail: err.message });
+    console.error("AI REQUEST ERROR:", err?.response?.data || err.message);
+    return res.status(500).json({
+      message: "AI error",
+      detail: err.message
+    });
   }
 });
 //////////////////////////////////////////////////
