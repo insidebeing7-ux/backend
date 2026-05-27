@@ -737,15 +737,19 @@ app.post('/ai-request', aiLimiter, requireAuth, csrfProtection, async (req, res)
 
     text = text.trim().slice(0, 2000);
 
-    const response = await axios.post(
-      process.env.AI_URL + "/ai",
-      {
-        text,
-        instructions: req.session.aiMode || "",
-        mode: "chat"
-      },
-      { timeout: 25000 }
-    );
+    const { mode } = req.body;
+const allowedModes = ["chat", "ai_writer", "summary", "greeting"];
+const safeMode = allowedModes.includes(mode) ? mode : "chat";
+
+const response = await axios.post(
+  process.env.AI_URL + "/ai",
+  {
+    text,
+    instructions: safeMode === "ai_writer" ? "" : (req.session.aiMode || ""),
+    mode: safeMode
+  },
+  { timeout: 25000 }
+);
 
     return res.json({
       reply: response.data.reply
