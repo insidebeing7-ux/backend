@@ -47,7 +47,10 @@ app.use(helmet({
   "wss://backend-1-liqz.onrender.com",
   "turn:openrelay.metered.ca",
   "stun:stun.l.google.com",
-  "stun:stun1.l.google.com"
+  "stun:stun1.l.google.com",
+   "stun:",
+  "turn:",
+  "turns:"     
 ],
     }
   }
