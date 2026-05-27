@@ -524,11 +524,15 @@ app.post('/ai-send', aiLimiter, requireAuth, perUserRateLimit,csrfProtection, as
 
   try {
     const finalInstructions = req.session.aiMode || "";
-    const aiResponse = await callAIWithRetry({
-  text,
-  instructions,
-  context: context || []
-});
+    const aiResponse = await axios.post(
+  process.env.AI_URL + "/ai",
+  {
+    text: content,
+    instructions: req.session.aiMode || "",
+    mode: "chat"
+  },
+  { timeout: 25000 }
+);
 
     let aiReply = aiResponse.data.reply;
 
