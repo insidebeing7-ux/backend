@@ -724,51 +724,35 @@ app.post('/toggle-auto-ai', requireAuth, csrfProtection, (req, res) => {
 app.post('/ai-request', aiLimiter, requireAuth, csrfProtection, async (req, res) => {
   const userId = req.session.user.id;
 
-  let { text, receiver_id } = req.body;
-
-  if (typeof text !== "string") {
-    return res.status(400).json({ message: "Invalid input" });
-  }
-
-  text = text.trim().slice(0, 2000);
-
-  const instructions = req.session.aiMode || "";
-
-  async function callAIWithRetry(payload, retries = 2) {
-    for (let i = 0; i <= retries; i++) {
-      try {
-        return await axios.post(process.env.AI_URL + "/ai", payload, {
-          timeout: 25000
-        });
-      } catch (err) {
-        const isLast = i === retries;
-        const retryable =
-          err.code === "ECONNABORTED" ||
-          err.response?.status >= 500;
-
-        if (!retryable || isLast) throw err;
-
-        await new Promise(r => setTimeout(r, 800));
-      }
-    }
-  }
-
   try {
-    const aiResponse = await callAIWithRetry({
-      text,
-      instructions,
-      mode: "chat"
+    let { text, receiver_id } = req.body;
+
+    if (typeof text !== "string") {
+      return res.status(400).json({ message: "Invalid input" });
+    }
+
+    text = text.trim().slice(0, 2000);
+
+    const response = await axios.post(
+      process.env.AI_URL + "/ai",
+      {
+        text,
+        instructions: req.session.aiMode || "",
+        mode: "chat"
+      },
+      { timeout: 25000 }
+    );
+
+    return res.json({
+      reply: response.data.reply
     });
-
-    const reply = aiResponse.data.reply || "";
-
-    return res.json({ reply });
 
   } catch (err) {
     console.error("AI REQUEST ERROR:", err?.response?.data || err.message);
+
     return res.status(500).json({
       message: "AI error",
-      detail: err.message
+      detail: err?.response?.data || err.message
     });
   }
 });
