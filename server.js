@@ -524,12 +524,10 @@ app.post('/ai-send', aiLimiter, requireAuth, perUserRateLimit,csrfProtection, as
 
   try {
     const finalInstructions = req.session.aiMode || "";
-    const aiResponse =await axios.post(process.env.AI_URL + "/ai", {
-  text: content,
-  instructions: finalInstructions,
+    const aiResponse = await callAIWithRetry({
+  text,
+  instructions,
   context: context || []
-}, {
-  timeout: 3000
 });
 
     let aiReply = aiResponse.data.reply;
@@ -740,13 +738,24 @@ app.post('/ai-request', aiLimiter, requireAuth,  csrfProtection,async (req, res)
 
   try {
 
-    const aiResponse = await axios.post(process.env.AI_URL + "/ai", {
-      text,
-      instructions,
-       mode: req.body.mode || "chat"
-    }, {
-      timeout: 15000
-    });
+    async function callAIWithRetry(payload, retries = 2) {
+  for (let i = 0; i <= retries; i++) {
+    try {
+      return await axios.post(process.env.AI_URL + "/ai", payload, {
+        timeout: 25000
+      });
+    } catch (err) {
+      const isLast = i === retries;
+      const retryable =
+        err.code === "ECONNABORTED" ||
+        err.response?.status >= 500;
+
+      if (!retryable || isLast) throw err;
+
+      await new Promise(r => setTimeout(r, 800)); // small delay before retry
+    }
+  }
+}
 
     const reply = aiResponse.data.reply || "";
 
