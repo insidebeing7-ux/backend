@@ -524,15 +524,11 @@ app.post('/ai-send', aiLimiter, requireAuth, perUserRateLimit,csrfProtection, as
 
   try {
     const finalInstructions = req.session.aiMode || "";
-    const aiResponse = await axios.post(
-  process.env.AI_URL + "/ai",
-  {
-    text: content,
-    instructions: req.session.aiMode || "",
-    mode: "chat"
-  },
-  { timeout: 25000 }
-);
+    const aiResponse = await callAIWithRetry({
+  text: content,
+  instructions: req.session.aiMode || "",
+  mode: "chat"
+});
 
     let aiReply = aiResponse.data.reply;
 
@@ -741,15 +737,11 @@ app.post('/ai-request', aiLimiter, requireAuth, csrfProtection, async (req, res)
 const allowedModes = ["chat", "ai_writer", "summary", "greeting"];
 const safeMode = allowedModes.includes(mode) ? mode : "chat";
 
-const response = await axios.post(
-  process.env.AI_URL + "/ai",
-  {
-    text,
-    instructions: safeMode === "ai_writer" ? "" : (req.session.aiMode || ""),
-    mode: safeMode
-  },
-  { timeout: 25000 }
-);
+const response = await callAIWithRetry({
+  text,
+  instructions: safeMode === "ai_writer" ? "" : (req.session.aiMode || ""),
+  mode: safeMode
+});
 
     return res.json({
       reply: response.data.reply
@@ -799,6 +791,33 @@ const io = new Server(server, {
   transports: ["websocket", "polling"]
 });
 let activeCalls = new Map();
+// ================= KEEP AI SERVER AWAKE =================
+function keepAIAlive() {
+  axios.get(process.env.AI_URL + "/health", { timeout: 10000 })
+    .then(() => console.log("✅ AI server pinged"))
+    .catch(err => console.warn("⚠️ AI ping failed:", err.message));
+}
+setInterval(keepAIAlive, 10 * 60 * 1000);
+keepAIAlive();
+
+// ================= AI RETRY HELPER =================
+async function callAIWithRetry(payload, retries = 2) {
+  for (let i = 0; i <= retries; i++) {
+    try {
+      return await axios.post(
+        process.env.AI_URL + "/ai",
+        payload,
+        { timeout: 25000 }
+      );
+    } catch (err) {
+      const isLast = i === retries;
+      if (err?.response?.status && err.response.status < 500) throw err;
+      if (isLast) throw err;
+      await new Promise(r => setTimeout(r, 2000));
+      console.warn(`⚠️ AI retry ${i + 1}/${retries}`);
+    }
+  }
+}
 io.on("connection", (socket) => {
 
   console.log("🔌 User connected:", socket.id);
