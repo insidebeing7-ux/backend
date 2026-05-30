@@ -747,15 +747,17 @@ const response = await callAIWithRetry({
       reply: response.data.reply
     });
 
-  } catch (err) {
-    console.error("AI REQUEST ERROR FULL:", err);
+   } catch (err) {
+    console.error("AI REQUEST ERROR:", err.code, err?.response?.status);
 
-    const isWaking = err.code === "ECONNABORTED" || err.code === "ECONNREFUSED";
+    const isTimeout = err.code === "ECONNABORTED";
+    const isDown    = err.code === "ECONNREFUSED" || err.code === "ENOTFOUND";
+
     return res.status(500).json({
-      message: isWaking
-        ? "AI is waking up, please try again in 10 seconds."
-        : "AI error",
-      detail: err?.response?.data || err.message
+      message: isTimeout || isDown
+        ? "AI is starting up, please wait 15 seconds and try again."
+        : "AI error. Please try again.",
+      waking: isTimeout || isDown   // ← frontend can use this flag
     });
   }
 });
@@ -811,16 +813,20 @@ async function callAIWithRetry(payload, retries = 3) {
       return await axios.post(
         process.env.AI_URL + "/ai",
         payload,
-        { timeout: 40000 }
+        { timeout: 55000 }  // 55s — covers Render cold start
       );
     } catch (err) {
       const isLast = i === retries;
+
+      // Don't retry 4xx errors (bad request, auth, etc.)
       if (err?.response?.status && err.response.status < 500) throw err;
       if (isLast) throw err;
 
-      const delay = i === 0 ? 5000 : 2000;
+      // Progressive delay: 8s, then 5s, then 3s
+      const delays = [8000, 5000, 3000];
+      const delay = delays[i] ?? 3000;
+      console.warn(`⚠️ AI retry ${i + 1}/${retries} — waiting ${delay}ms`);
       await new Promise(r => setTimeout(r, delay));
-      console.warn(`⚠️ AI retry ${i + 1}/${retries}`);
     }
   }
 }
