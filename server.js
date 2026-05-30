@@ -725,7 +725,7 @@ app.post('/ai-request', aiLimiter, requireAuth, csrfProtection, async (req, res)
   const userId = req.session.user.id;
 
   try {
-    let { text, receiver_id } = req.body;
+    let { text, mode } = req.body;
 
     if (typeof text !== "string") {
       return res.status(400).json({ message: "Invalid input" });
@@ -733,31 +733,38 @@ app.post('/ai-request', aiLimiter, requireAuth, csrfProtection, async (req, res)
 
     text = text.trim().slice(0, 2000);
 
-    const { mode } = req.body;
-const allowedModes = ["chat", "ai_writer", "summary", "greeting"];
-const safeMode = allowedModes.includes(mode) ? mode : "chat";
+    const allowedModes = ["chat", "ai_writer", "summary", "greeting"];
+    const safeMode = allowedModes.includes(mode) ? mode : "chat";
 
-const response = await callAIWithRetry({
-  text,
-  instructions: safeMode === "ai_writer" ? "" : (req.session.aiMode || ""),
-  mode: safeMode
-});
+    // 🔥 Step 1: ping /health first to wake the server up
+    try {
+      await axios.get(process.env.AI_URL + "/health", { timeout: 30000 });
+    } catch (pingErr) {
+      console.warn("⚠️ AI wake-up ping failed:", pingErr.code);
+      return res.status(503).json({
+        message: "AI is starting up, please try again in 15 seconds.",
+        waking: true
+      });
+    }
 
-    return res.json({
-      reply: response.data.reply
+    // 🔥 Step 2: now call AI (it's awake, so 1 try is enough)
+    const response = await callAIWithRetry({
+      text,
+      instructions: safeMode === "ai_writer" ? "" : (req.session.aiMode || ""),
+      mode: safeMode
     });
 
-   } catch (err) {
+    return res.json({ reply: response.data.reply });
+
+  } catch (err) {
     console.error("AI REQUEST ERROR:", err.code, err?.response?.status);
-
     const isTimeout = err.code === "ECONNABORTED";
-    const isDown    = err.code === "ECONNREFUSED" || err.code === "ENOTFOUND";
-
-    return res.status(500).json({
+    const isDown = err.code === "ECONNREFUSED" || err.code === "ENOTFOUND";
+    return res.status(503).json({
       message: isTimeout || isDown
-        ? "AI is starting up, please wait 15 seconds and try again."
+        ? "AI is starting up, please try again in 15 seconds."
         : "AI error. Please try again.",
-      waking: isTimeout || isDown   // ← frontend can use this flag
+      waking: isTimeout || isDown
     });
   }
 });
@@ -807,26 +814,20 @@ keepAIAlive();
 
 // ================= AI RETRY HELPER =================
 // ================= AI RETRY HELPER =================
-async function callAIWithRetry(payload, retries = 3) {
+async function callAIWithRetry(payload, retries = 1) {
   for (let i = 0; i <= retries; i++) {
     try {
       return await axios.post(
         process.env.AI_URL + "/ai",
         payload,
-        { timeout: 55000 }  // 55s — covers Render cold start
+        { timeout: 30000 }
       );
     } catch (err) {
       const isLast = i === retries;
-
-      // Don't retry 4xx errors (bad request, auth, etc.)
       if (err?.response?.status && err.response.status < 500) throw err;
       if (isLast) throw err;
-
-      // Progressive delay: 8s, then 5s, then 3s
-      const delays = [8000, 5000, 3000];
-      const delay = delays[i] ?? 3000;
-      console.warn(`⚠️ AI retry ${i + 1}/${retries} — waiting ${delay}ms`);
-      await new Promise(r => setTimeout(r, delay));
+      await new Promise(r => setTimeout(r, 3000));
+      console.warn(`⚠️ AI retry ${i + 1}/${retries}`);
     }
   }
 }
