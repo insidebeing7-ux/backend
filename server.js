@@ -750,10 +750,13 @@ const response = await callAIWithRetry({
   } catch (err) {
     console.error("AI REQUEST ERROR FULL:", err);
 
-return res.status(500).json({
-  message: "AI error",
-  detail: err?.response?.data || err.message
-});
+    const isWaking = err.code === "ECONNABORTED" || err.code === "ECONNREFUSED";
+    return res.status(500).json({
+      message: isWaking
+        ? "AI is waking up, please try again in 10 seconds."
+        : "AI error",
+      detail: err?.response?.data || err.message
+    });
   }
 });
 //////////////////////////////////////////////////
@@ -801,27 +804,26 @@ setInterval(keepAIAlive, 13 * 60 * 1000);
 keepAIAlive();
 
 // ================= AI RETRY HELPER =================
+// ================= AI RETRY HELPER =================
 async function callAIWithRetry(payload, retries = 3) {
   for (let i = 0; i <= retries; i++) {
     try {
       return await axios.post(
         process.env.AI_URL + "/ai",
         payload,
-        { timeout: 40000 }  // ⬆️ increased from 25s to 40s
+        { timeout: 40000 }
       );
     } catch (err) {
-    console.error("AI REQUEST ERROR FULL:", err);
+      const isLast = i === retries;
+      if (err?.response?.status && err.response.status < 500) throw err;
+      if (isLast) throw err;
 
-    const isWaking = err.code === "ECONNABORTED" || err.code === "ECONNREFUSED";
-    return res.status(500).json({
-      message: isWaking
-        ? "AI is waking up, please try again in 10 seconds."
-        : "AI error",
-      detail: err?.response?.data || err.message
-    });
+      const delay = i === 0 ? 5000 : 2000;
+      await new Promise(r => setTimeout(r, delay));
+      console.warn(`⚠️ AI retry ${i + 1}/${retries}`);
+    }
   }
-  }
-}}
+}
 io.on("connection", (socket) => {
 
   console.log("🔌 User connected:", socket.id);
