@@ -797,27 +797,31 @@ function keepAIAlive() {
     .then(() => console.log("✅ AI server pinged"))
     .catch(err => console.warn("⚠️ AI ping failed:", err.message));
 }
-setInterval(keepAIAlive, 10 * 60 * 1000);
+setInterval(keepAIAlive, 13 * 60 * 1000);
 keepAIAlive();
 
 // ================= AI RETRY HELPER =================
-async function callAIWithRetry(payload, retries = 2) {
+async function callAIWithRetry(payload, retries = 3) {
   for (let i = 0; i <= retries; i++) {
     try {
       return await axios.post(
         process.env.AI_URL + "/ai",
         payload,
-        { timeout: 25000 }
+        { timeout: 40000 }  // ⬆️ increased from 25s to 40s
       );
     } catch (err) {
-      const isLast = i === retries;
-      if (err?.response?.status && err.response.status < 500) throw err;
-      if (isLast) throw err;
-      await new Promise(r => setTimeout(r, 2000));
-      console.warn(`⚠️ AI retry ${i + 1}/${retries}`);
-    }
+    console.error("AI REQUEST ERROR FULL:", err);
+
+    const isWaking = err.code === "ECONNABORTED" || err.code === "ECONNREFUSED";
+    return res.status(500).json({
+      message: isWaking
+        ? "AI is waking up, please try again in 10 seconds."
+        : "AI error",
+      detail: err?.response?.data || err.message
+    });
   }
-}
+  }
+}}
 io.on("connection", (socket) => {
 
   console.log("🔌 User connected:", socket.id);
