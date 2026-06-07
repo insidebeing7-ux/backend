@@ -882,14 +882,12 @@ io.to(String(data.to)).emit("incoming-call", {
 });
 
 });
+// AFTER
 socket.on("end-call", (data) => {
-
   const room = getRoom(socket.userId, String(data.to));
-
   activeCalls.delete(room);
-
   io.to(String(data.to)).emit("call-ended");
-  socket.emit("call-ended");
+  // Do NOT echo back to sender — they already called endCall()
 });
 
   socket.on("answer-call", (data) => {
@@ -915,8 +913,18 @@ socket.on("end-call", (data) => {
   });
 
   socket.on("disconnect", () => {
-    console.log("❌ Disconnected:", socket.id);
-  });
+  console.log("❌ Disconnected:", socket.id);
+  // Clean up any active call rooms this socket was part of
+  for (const [room] of activeCalls) {
+    const parts = room.split("-");
+    if (parts.includes(socket.userId)) {
+      activeCalls.delete(room);
+      // Notify the other person in the room
+      const otherId = parts.find(p => p !== socket.userId);
+      if (otherId) io.to(otherId).emit("call-ended");
+    }
+  }
+});
 
 });
 
