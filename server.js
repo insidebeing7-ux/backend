@@ -853,10 +853,21 @@ function getRoom(a, b) {
   return [a, b].sort().join("-");
 }
 
+// AFTER
 socket.on("call-user", (data) => {
-
   console.log("CALL REQUEST FROM:", socket.userId);
   console.log("CALL REQUEST TO:", data.to);
+
+  if (!socket.userId) {
+    socket.emit("call-rejected", { message: "Not authenticated" });
+    return;
+  }
+
+  if (!data.offer) {
+    console.log("❌ No offer received — rejecting call");
+    socket.emit("call-rejected", { message: "Missing offer" });
+    return;
+  }
 
   const room = getRoom(socket.userId, String(data.to));
 
@@ -869,60 +880,61 @@ socket.on("call-user", (data) => {
 
   activeCalls.set(room, true);
 
+  setTimeout(() => {
+    if (activeCalls.has(room)) {
+      activeCalls.delete(room);
+      console.log(`⏰ Auto-expired stuck call room: ${room}`);
+    }
+  }, 2 * 60 * 1000);
+
   console.log("EMIT incoming-call to:", data.to);
 
-  if (!data.offer) {
-  console.log("❌ No offer received — rejecting call");
-  return;
-}
-
-io.to(String(data.to)).emit("incoming-call", {
-  from: socket.userId,
-  offer: data.offer
-});
-
+  io.to(String(data.to)).emit("incoming-call", {
+    from: socket.userId,
+    offer: data.offer
+  });
 });
 // AFTER
 socket.on("end-call", (data) => {
+  if (!socket.userId) return;
   const room = getRoom(socket.userId, String(data.to));
   activeCalls.delete(room);
   io.to(String(data.to)).emit("call-ended");
-  // Do NOT echo back to sender — they already called endCall()
 });
 
-  socket.on("answer-call", (data) => {
-
-    io.to(String(data.to)).emit("call-answered", {
-      answer: data.answer
-    });
-
+socket.on("answer-call", (data) => {
+  if (!socket.userId) return;
+  io.to(String(data.to)).emit("call-answered", {
+    answer: data.answer
   });
+});
 
-  socket.on("ice-candidate", (data) => {
-
-    io.to(String(data.to)).emit("ice-candidate", {
-      candidate: data.candidate
-    });
-
+socket.on("ice-candidate", (data) => {
+  if (!socket.userId) return;
+  io.to(String(data.to)).emit("ice-candidate", {
+    candidate: data.candidate
   });
+});
 
-  socket.on("decline-call", (data) => {
+socket.on("decline-call", (data) => {
+  if (!socket.userId) return;
+  io.to(String(data.to)).emit("call-declined");
+});
 
-    io.to(String(data.to)).emit("call-declined");
-
-  });
-
-  socket.on("disconnect", () => {
+ socket.on("disconnect", () => {
   console.log("❌ Disconnected:", socket.id);
-  // Clean up any active call rooms this socket was part of
+  const roomsToDelete = [];
   for (const [room] of activeCalls) {
     const parts = room.split("-");
     if (parts.includes(socket.userId)) {
-      activeCalls.delete(room);
-      // Notify the other person in the room
-      const otherId = parts.find(p => p !== socket.userId);
-      if (otherId) io.to(otherId).emit("call-ended");
+      roomsToDelete.push(room);
     }
+  }
+  for (const room of roomsToDelete) {
+    activeCalls.delete(room);
+    const parts = room.split("-");
+    const otherId = parts.find(p => p !== socket.userId);
+    if (otherId) io.to(otherId).emit("call-ended");
   }
 });
 
