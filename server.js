@@ -179,7 +179,7 @@ db.connect(err => {
 });
 
 // ================= REGISTER =================
-app.post('/register', authLimiter, validateRegister, csrfProtection,(req, res) => {
+app.post('/register', authLimiter, validateRegister,(req, res) => {
 
     // ✅ ADD THIS BLOCK HERE
   if (!req.body.agreed) {
@@ -352,7 +352,7 @@ app.get('/search-users', authLimiter, requireAuth,(req, res)  => {
 });
 
 // ================= SEND MESSAGE =================
-app.post('/send', requireAuth, perUserRateLimit, csrfProtection,(req, res) => {
+app.post('/send', requireAuth, perUserRateLimit,(req, res) => {
  
   const sender_id = req.session.user.id;
   let { receiver_id, content } = req.body;
@@ -473,7 +473,7 @@ app.get('/messages', requireAuth, (req, res) => {
 });
 
 // ================= AI SEND =================
-app.post('/ai-send', aiLimiter, requireAuth, perUserRateLimit,csrfProtection, async (req, res) => {
+app.post('/ai-send', aiLimiter, requireAuth, perUserRateLimit, async (req, res) => {
 
   const sender_id = req.session.user.id;
   const userId = req.session.user.id;
@@ -678,7 +678,7 @@ app.get('/get-ai-mode', requireAuth, (req, res) => {
   });
 });
 //////////////////////////////////////
-app.post('/toggle-auto-ai', requireAuth, csrfProtection, (req, res) => {
+app.post('/toggle-auto-ai', requireAuth, (req, res) => {
 
   const user_id = req.session.user.id;
   const { receiver_id } = req.body;
@@ -721,7 +721,7 @@ app.post('/toggle-auto-ai', requireAuth, csrfProtection, (req, res) => {
   );
 });
 ///////////////////////////////////////////////////
-app.post('/ai-request', aiLimiter, requireAuth, csrfProtection, async (req, res) => {
+app.post('/ai-request', aiLimiter, requireAuth, async (req, res) => {
   const userId = req.session.user.id;
 
   try {
