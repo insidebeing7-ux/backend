@@ -172,7 +172,7 @@ db.connect(err => {
 });
 
 // ================= REGISTER =================
-app.post('/register', authLimiter, validateRegister, csrfProtection, (req, res) => {
+app.post('/register', authLimiter, validateRegister, (req, res) => {
   if (!req.body.agreed) {
     return res.status(400).json({ message: "You must accept the Terms of Use" });
   }
@@ -270,7 +270,7 @@ app.get('/search-users', authLimiter, requireAuth, (req, res) => {
 });
 
 // ================= SEND MESSAGE =================
-app.post('/send', requireAuth, perUserRateLimit, csrfProtection, (req, res) => {
+app.post('/send', requireAuth, perUserRateLimit, (req, res) => {
   const sender_id = req.session.user.id;
   let { receiver_id, content } = req.body;
   const receiverId = Number(receiver_id);
@@ -327,7 +327,7 @@ app.get('/messages', requireAuth, (req, res) => {
 });
 
 // ================= FILE UPLOAD =================
-app.post('/upload', requireAuth, csrfProtection, upload.single("file"), async (req, res) => {
+app.post('/upload', requireAuth, upload.single("file"), async (req, res) => {
   const sender_id = req.session.user.id;
   const receiver_id = Number(req.body.receiver_id);
 
@@ -372,7 +372,7 @@ app.post('/upload', requireAuth, csrfProtection, upload.single("file"), async (r
 app.use("/uploads", requireAuth, express.static(path.join(__dirname, "uploads")));
 
 // ================= AI SEND =================
-app.post('/ai-send', aiLimiter, requireAuth, perUserRateLimit, csrfProtection, async (req, res) => {
+app.post('/ai-send', aiLimiter, requireAuth, perUserRateLimit, async (req, res) => {
   const sender_id = req.session.user.id;
   const userId = req.session.user.id;
   const now = Date.now();
@@ -487,7 +487,7 @@ app.get('/get-ai-mode', requireAuth, (req, res) => {
 });
 
 // ================= TOGGLE AUTO AI =================
-app.post('/toggle-auto-ai', requireAuth, csrfProtection, (req, res) => {
+app.post('/toggle-auto-ai', requireAuth, (req, res) => {
   const user_id = req.session.user.id;
   const { receiver_id } = req.body;
   if (!Number.isInteger(Number(receiver_id))) return res.status(400).json({ message: "Invalid receiver" });
@@ -513,7 +513,7 @@ app.post('/toggle-auto-ai', requireAuth, csrfProtection, (req, res) => {
 });
 
 // ================= AI REQUEST =================
-app.post('/ai-request', aiLimiter, requireAuth, csrfProtection, async (req, res) => {
+app.post('/ai-request', aiLimiter, requireAuth, async (req, res) => {
   try {
     let { text, mode } = req.body;
     if (typeof text !== "string") return res.status(400).json({ message: "Invalid input" });
