@@ -171,8 +171,16 @@ db.connect(err => {
   console.log('✅ Connected to MySQL');
 });
 
+db.on('error', (err) => {
+  console.error('❌ MySQL runtime error:', err);
+  if (err.code === 'PROTOCOL_CONNECTION_LOST' || err.code === 'ECONNRESET') {
+    console.log('🔄 Reconnecting to MySQL...');
+    db.connect();
+  }
+});
+
 // ================= REGISTER =================
-app.post('/register', authLimiter, validateRegister, (req, res) => {
+app.post('/register', authLimiter, csrfProtection, validateRegister, (req, res) => {
   if (!req.body.agreed) {
     return res.status(400).json({ message: "You must accept the Terms of Use" });
   }
