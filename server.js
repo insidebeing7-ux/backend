@@ -615,9 +615,16 @@ io.on("connection", (socket) => {
     const room = getRoom(socket.userId, String(data.to));
     if (activeCalls.has(room)) { socket.emit("call-rejected", { message: "Call already active" }); return; }
     activeCalls.set(room, true);
-    setTimeout(() => { if (activeCalls.has(room)) { activeCalls.delete(room); } }, 2 * 60 * 1000);
-    io.to(String(data.to)).emit("incoming-call", { from: socket.userId, offer: data.offer });
-  });
+setTimeout(() => {
+  if (activeCalls.has(room)) {
+    activeCalls.delete(room);
+    const callerId = String(socket.userId);
+    const calleeId = callerId === room.split("-")[0] ? room.split("-")[1] : room.split("-")[0];
+    io.to(calleeId).emit("call-missed", { caller_id: callerId, callee_id: calleeId });
+    io.to(callerId).emit("call-missed", { caller_id: callerId, callee_id: calleeId });
+  }
+}, 30 * 1000);
+io.to(String(data.to)).emit("incoming-call", { from: socket.userId, offer: data.offer });
 
   socket.on("end-call", (data) => {
     if (!socket.userId) return;
@@ -639,7 +646,21 @@ io.on("connection", (socket) => {
     if (!socket.userId) return;
     io.to(String(data.to)).emit("call-declined");
   });
-
+  socket.on("save-missed-call", (data) => {
+    if (!socket.userId) return;
+    const callerId = Number(data.caller_id);
+    const calleeId = Number(data.callee_id);
+    if (!Number.isInteger(callerId) || !Number.isInteger(calleeId)) return;
+    db.query(
+      "INSERT INTO messages (sender_id, receiver_id, content) VALUES (?,?,?)",
+      [callerId, calleeId, "📵 Missed call"],
+      (err) => {
+        if (err) { console.error("❌ MISSED CALL DB ERROR:", err); return; }
+        io.to(String(callerId)).emit("missed-call-saved", { caller_id: callerId, callee_id: calleeId });
+        io.to(String(calleeId)).emit("missed-call-saved", { caller_id: callerId, callee_id: calleeId });
+      }
+    );
+  });
   socket.on("disconnect", () => {
     console.log("❌ Disconnected:", socket.id);
     const roomsToDelete = [];
