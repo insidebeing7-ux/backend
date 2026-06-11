@@ -521,15 +521,15 @@ app.post('/toggle-auto-ai', requireAuth, (req, res) => {
 });
 
 // ================= AI REQUEST =================
+// ================= AI REQUEST =================
 app.post('/ai-request', aiLimiter, requireAuth, async (req, res) => {
   try {
-      let { text, mode, instructions } = req.body;
+    let { text, mode, instructions } = req.body;
     if (typeof text !== "string") return res.status(400).json({ message: "Invalid input" });
     text = text.trim().slice(0, 2000);
     const allowedModes = ["chat", "ai_writer", "summary", "greeting"];
     const safeMode = allowedModes.includes(mode) ? mode : "chat";
 
-    // ✅ use client instructions if sent, else fall back to session
     let safeInstructions = "";
     if (typeof instructions === "string" && instructions.trim().length > 0) {
       safeInstructions = instructions.trim().slice(0, 300);
@@ -542,13 +542,6 @@ app.post('/ai-request', aiLimiter, requireAuth, async (req, res) => {
     } catch (pingErr) {
       console.warn("⚠️ AI wake-up ping failed:", pingErr.code);
       return res.status(503).json({ message: "AI is starting up, please try again in 15 seconds.", waking: true });
-    }
-
-   let safeInstructions = "";
-    if (typeof instructions === "string" && instructions.trim().length > 0) {
-      safeInstructions = instructions.trim().slice(0, 300);
-    } else if (req.session.aiMode) {
-      safeInstructions = req.session.aiMode;
     }
 
     const response = await callAIWithRetry({
