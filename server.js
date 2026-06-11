@@ -521,21 +521,13 @@ app.post('/toggle-auto-ai', requireAuth, (req, res) => {
 });
 
 // ================= AI REQUEST =================
-// ================= AI REQUEST =================
 app.post('/ai-request', aiLimiter, requireAuth, async (req, res) => {
   try {
-    let { text, mode, instructions } = req.body;
+    let { text, mode } = req.body;
     if (typeof text !== "string") return res.status(400).json({ message: "Invalid input" });
     text = text.trim().slice(0, 2000);
     const allowedModes = ["chat", "ai_writer", "summary", "greeting"];
     const safeMode = allowedModes.includes(mode) ? mode : "chat";
-
-    let safeInstructions = "";
-    if (typeof instructions === "string" && instructions.trim().length > 0) {
-      safeInstructions = instructions.trim().slice(0, 300);
-    } else if (req.session.aiMode) {
-      safeInstructions = req.session.aiMode;
-    }
 
     try {
       await axios.get(process.env.AI_URL + "/health", { timeout: 30000 });
@@ -546,7 +538,7 @@ app.post('/ai-request', aiLimiter, requireAuth, async (req, res) => {
 
     const response = await callAIWithRetry({
       text,
-      instructions: safeMode === "ai_writer" ? "" : safeInstructions,
+      instructions: safeMode === "ai_writer" ? "" : (req.session.aiMode || ""),
       mode: safeMode
     });
     return res.json({ reply: response.data.reply });
