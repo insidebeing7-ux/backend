@@ -523,11 +523,19 @@ app.post('/toggle-auto-ai', requireAuth, (req, res) => {
 // ================= AI REQUEST =================
 app.post('/ai-request', aiLimiter, requireAuth, async (req, res) => {
   try {
-    let { text, mode } = req.body;
+      let { text, mode, instructions } = req.body;
     if (typeof text !== "string") return res.status(400).json({ message: "Invalid input" });
     text = text.trim().slice(0, 2000);
     const allowedModes = ["chat", "ai_writer", "summary", "greeting"];
     const safeMode = allowedModes.includes(mode) ? mode : "chat";
+
+    // ✅ use client instructions if sent, else fall back to session
+    let safeInstructions = "";
+    if (typeof instructions === "string" && instructions.trim().length > 0) {
+      safeInstructions = instructions.trim().slice(0, 300);
+    } else if (req.session.aiMode) {
+      safeInstructions = req.session.aiMode;
+    }
 
     try {
       await axios.get(process.env.AI_URL + "/health", { timeout: 30000 });
@@ -536,9 +544,9 @@ app.post('/ai-request', aiLimiter, requireAuth, async (req, res) => {
       return res.status(503).json({ message: "AI is starting up, please try again in 15 seconds.", waking: true });
     }
 
-    const response = await callAIWithRetry({
+   const response = await callAIWithRetry({
       text,
-      instructions: safeMode === "ai_writer" ? "" : (req.session.aiMode || ""),
+      instructions: safeMode === "ai_writer" ? "" : safeInstructions,
       mode: safeMode
     });
     return res.json({ reply: response.data.reply });
