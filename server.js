@@ -544,7 +544,14 @@ app.post('/ai-request', aiLimiter, requireAuth, async (req, res) => {
       return res.status(503).json({ message: "AI is starting up, please try again in 15 seconds.", waking: true });
     }
 
-   const response = await callAIWithRetry({
+   let safeInstructions = "";
+    if (typeof instructions === "string" && instructions.trim().length > 0) {
+      safeInstructions = instructions.trim().slice(0, 300);
+    } else if (req.session.aiMode) {
+      safeInstructions = req.session.aiMode;
+    }
+
+    const response = await callAIWithRetry({
       text,
       instructions: safeMode === "ai_writer" ? "" : safeInstructions,
       mode: safeMode
