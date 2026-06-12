@@ -596,7 +596,19 @@ function keepAIAlive() {
 }
 setInterval(keepAIAlive, 13 * 60 * 1000);
 keepAIAlive();
+// ================= SELF-PING (prevent Render sleep) =================
+const SELF_URL = process.env.RENDER_EXTERNAL_URL || `http://localhost:${port}`;
 
+function keepServerAlive() {
+  http.get(`${SELF_URL}/csrf-token`, (res) => {
+    console.log(`✅ Self-ping OK (${res.statusCode})`);
+  }).on("error", (err) => {
+    console.warn("⚠️ Self-ping failed:", err.message);
+  });
+}
+
+setInterval(keepServerAlive, 10 * 60 * 1000);
+keepServerAlive();
 async function callAIWithRetry(payload, retries = 1) {
   for (let i = 0; i <= retries; i++) {
     try {
