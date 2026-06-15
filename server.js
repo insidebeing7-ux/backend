@@ -244,7 +244,9 @@ app.get('/user-data', requireAuth, (req, res) => {
 app.get('/csrf-token', (req, res) => {
   try {
     const token = req.csrfToken();
-    res.json({ csrfToken: token });
+    req.session.save(() => {
+      res.json({ csrfToken: token });
+    });
   } catch (err) {
     console.error("CSRF ERROR:", err);
     res.status(500).json({ message: "CSRF token error" });
