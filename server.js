@@ -598,29 +598,7 @@ function keepAIAlive() {
 }
 setInterval(keepAIAlive, 13 * 60 * 1000);
 keepAIAlive();
-// ================= SELF-PING (prevent Render sleep) =================
-// ================= SELF-PING (prevent Render sleep) =================
-// ================= SELF-PING (prevent Render spin-down) =================
-const SELF_URL = process.env.RENDER_EXTERNAL_URL || process.env.PUBLIC_URL || null;
 
-if (!SELF_URL) {
-  console.warn("⚠️ No RENDER_EXTERNAL_URL or PUBLIC_URL set — self-ping disabled. " +
-    "Set PUBLIC_URL in your Render env vars to your service's public onrender.com URL.");
-} else {
-  console.log(`🌐 Self-ping target: ${SELF_URL}/csrf-token`);
-
-  function keepServerAlive() {
-    axios.get(`${SELF_URL}/csrf-token`, { timeout: 10000 })
-      .then(res => console.log(`✅ Self-ping OK (${res.status})`))
-      .catch(err => console.warn("⚠️ Self-ping failed:", err.message));
-  }
-
-  setInterval(keepServerAlive, 5 * 60 * 1000);
-  keepServerAlive();
-}
-
-setInterval(keepServerAlive, 10 * 60 * 1000);
-keepServerAlive();
 async function callAIWithRetry(payload, retries = 1) {
   for (let i = 0; i <= retries; i++) {
     try {
