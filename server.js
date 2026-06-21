@@ -627,30 +627,60 @@ io.on("connection", (socket) => {
     if (!socket.userId) { socket.emit("call-rejected", { message: "Not authenticated" }); return; }
     if (!data.offer) { socket.emit("call-rejected", { message: "Missing offer" }); return; }
     const room = getRoom(socket.userId, String(data.to));
-    if (activeCalls.has(room)) { socket.emit("call-rejected", { message: "Call already active" }); return; }
-    activeCalls.set(room, true);
-setTimeout(() => {
-  if (activeCalls.has(room)) {
-    activeCalls.delete(room);
-    const callerId = String(socket.userId);
-    const calleeId = callerId === room.split("-")[0] ? room.split("-")[1] : room.split("-")[0];
-    io.to(calleeId).emit("call-missed", { caller_id: callerId, callee_id: calleeId });
-    io.to(callerId).emit("call-missed", { caller_id: callerId, callee_id: calleeId });
-  }
-}, 30 * 1000);
-io.to(String(data.to)).emit("incoming-call", { from: socket.userId, offer: data.offer });
- });
+
+    // NEW: if this is a RENEGOTIATION (ICE restart / m-line keepalive) on an
+    // already-active call, don't treat it as a brand new call attempt — just
+    // forward the offer and leave the existing activeCalls timer alone.
+    const existing = activeCalls.get(room);
+    if (existing && existing.answered) {
+      io.to(String(data.to)).emit("incoming-call", { from: socket.userId, offer: data.offer });
+      return;
+    }
+    if (existing) { socket.emit("call-rejected", { message: "Call already active" }); return; }
+
+    // NEW: store the timer handle (not just `true`) so it can be cancelled later
+    const missedTimer = setTimeout(() => {
+      const current = activeCalls.get(room);
+      if (current && !current.answered) {
+        activeCalls.delete(room);
+        const callerId = String(socket.userId);
+        const calleeId = callerId === room.split("-")[0] ? room.split("-")[1] : room.split("-")[0];
+        io.to(calleeId).emit("call-missed", { caller_id: callerId, callee_id: calleeId });
+        io.to(callerId).emit("call-missed", { caller_id: callerId, callee_id: calleeId });
+      }
+    }, 30 * 1000);
+
+    activeCalls.set(room, { answered: false, timer: missedTimer });
+    io.to(String(data.to)).emit("incoming-call", { from: socket.userId, offer: data.offer });
+  });
+
   socket.on("end-call", (data) => {
     if (!socket.userId) return;
-    activeCalls.delete(getRoom(socket.userId, String(data.to)));
+    const room = getRoom(socket.userId, String(data.to));
+    const current = activeCalls.get(room);
+    if (current?.timer) clearTimeout(current.timer); // NEW: cancel pending missed-call timer
+    activeCalls.delete(room);
     io.to(String(data.to)).emit("call-ended");
   });
 
   socket.on("answer-call", (data) => {
     if (!socket.userId) return;
-    console.log(`📞 answer-call: from=${socket.userId} to="${data.to}"`); // NEW
+    console.log(`📞 answer-call: from=${socket.userId} to="${data.to}"`);
+
+    // NEW: this is the critical fix — mark the call as answered and CANCEL
+    // the 30-second missed-call timer. Without this, every call gets force-
+    // ended and marked "missed" exactly 30s after it started, even if it's
+    // actively connected and working fine.
+    const room = getRoom(socket.userId, String(data.to));
+    const current = activeCalls.get(room);
+    if (current?.timer) {
+      clearTimeout(current.timer);
+      activeCalls.set(room, { answered: true, timer: null });
+      console.log(`✅ Call answered — cleared missed-call timeout for room ${room}`);
+    }
+
     io.to(String(data.to)).emit("call-answered", { answer: data.answer });
-});
+  });
 
   socket.on("ice-candidate", (data) => {
     if (!socket.userId) return;
@@ -659,6 +689,11 @@ io.to(String(data.to)).emit("incoming-call", { from: socket.userId, offer: data.
 
   socket.on("decline-call", (data) => {
     if (!socket.userId) return;
+    // NEW: clean up the timer on decline too
+    const room = getRoom(socket.userId, String(data.to));
+    const current = activeCalls.get(room);
+    if (current?.timer) clearTimeout(current.timer);
+    activeCalls.delete(room);
     io.to(String(data.to)).emit("call-declined");
   });
   socket.on("save-missed-call", (data) => {
@@ -683,6 +718,8 @@ io.to(String(data.to)).emit("incoming-call", { from: socket.userId, offer: data.
       if (room.split("-").includes(socket.userId)) roomsToDelete.push(room);
     }
     for (const room of roomsToDelete) {
+      const current = activeCalls.get(room);
+      if (current?.timer) clearTimeout(current.timer); // NEW: cancel any pending timer
       activeCalls.delete(room);
       const otherId = room.split("-").find(p => p !== socket.userId);
       if (otherId) io.to(otherId).emit("call-ended");
