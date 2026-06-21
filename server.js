@@ -648,8 +648,9 @@ io.to(String(data.to)).emit("incoming-call", { from: socket.userId, offer: data.
 
   socket.on("answer-call", (data) => {
     if (!socket.userId) return;
+    console.log(`📞 answer-call: from=${socket.userId} to="${data.to}"`); // NEW
     io.to(String(data.to)).emit("call-answered", { answer: data.answer });
-  });
+});
 
   socket.on("ice-candidate", (data) => {
     if (!socket.userId) return;
