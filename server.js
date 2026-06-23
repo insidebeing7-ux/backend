@@ -213,6 +213,7 @@ app.post('/register', authLimiter, csrfProtection, validateRegister, (req, res) 
 });
 
 // ================= LOGIN =================
+// ================= LOGIN =================
 app.post('/login', loginLimiter, (req, res) => {
   const clean = (v) => typeof v === "string" ? v.trim() : "";
   const username = clean(req.body.username);
@@ -221,23 +222,24 @@ app.post('/login', loginLimiter, (req, res) => {
     return res.status(400).json({ message: 'Invalid input' });
   }
   db.query('SELECT * FROM users WHERE username=?', [username], (err, result) => {
-  if (err) return res.status(500).json({ message: 'Server error' });
-  if (result.length === 0) return res.status(401).json({ message: 'Invalid credentials' });
-  const user = result[0];
-  bcrypt.compare(password, user.password, (err, isMatch) => {
-    if (!isMatch) return res.status(401).json({ message: 'Invalid credentials' });
-    db.query(
-      `DELETE FROM sessions WHERE data LIKE ?`,
-      [`%"id":${user.id}%`],
-      (deleteErr) => {
-        if (deleteErr) console.warn("⚠️ Could not clear old sessions:", deleteErr);
-        req.session.user = { id: user.id, username: user.username };
-        req.session.save((err) => {
-          if (err) return res.status(500).json({ message: "Session error" });
-          res.json({ message: "Logged in" });
-        });
-      }
-    );
+    if (err) return res.status(500).json({ message: 'Server error' });
+    if (result.length === 0) return res.status(401).json({ message: 'Invalid credentials' });
+    const user = result[0];
+    bcrypt.compare(password, user.password, (err, isMatch) => {
+      if (!isMatch) return res.status(401).json({ message: 'Invalid credentials' });
+      db.query(
+        `DELETE FROM sessions WHERE data LIKE ?`,
+        [`%"id":${user.id}%`],
+        (deleteErr) => {
+          if (deleteErr) console.warn("⚠️ Could not clear old sessions:", deleteErr);
+          req.session.user = { id: user.id, username: user.username };
+          req.session.save((err) => {
+            if (err) return res.status(500).json({ message: "Session error" });
+            res.json({ message: "Logged in" });
+          });
+        }
+      );
+    });
   });
 });
 
