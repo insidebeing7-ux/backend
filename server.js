@@ -194,21 +194,23 @@ app.post('/register', authLimiter, csrfProtection, validateRegister, (req, res) 
   if (!username || !password) return res.status(400).json({ message: 'All fields required' });
 
   db.query('SELECT * FROM users WHERE username=?', [username], (err, result) => {
-    if (err) return res.status(500).json({ message: 'Server error' });
-    if (result.length > 0) return res.status(409).json({ message: 'Username exists' });
-
-    db.query('SELECT * FROM users WHERE signup_ip=?', [ip], (err, ipResult) => {
-      if (err) return res.status(500).json({ message: 'Server error' });
-      if (ipResult.length > 0) return res.status(429).json({ message: "This IP already created an account" });
-
-      bcrypt.hash(password, 12, (err, hash) => {
-        if (err) return res.status(500).json({ message: 'Server error' });
-        db.query('INSERT INTO users (username, password, signup_ip) VALUES (?,?,?)', [username, hash, ip], (err) => {
-          if (err) return res.status(500).json({ message: 'Server error' });
-          return res.json({ message: 'User created' });
+  if (err) return res.status(500).json({ message: 'Server error' });
+  if (result.length === 0) return res.status(401).json({ message: 'Invalid credentials' });
+  const user = result[0];
+  bcrypt.compare(password, user.password, (err, isMatch) => {
+    if (!isMatch) return res.status(401).json({ message: 'Invalid credentials' });
+    db.query(
+      `DELETE FROM sessions WHERE data LIKE ?`,
+      [`%"id":${user.id}%`],
+      (deleteErr) => {
+        if (deleteErr) console.warn("⚠️ Could not clear old sessions:", deleteErr);
+        req.session.user = { id: user.id, username: user.username };
+        req.session.save((err) => {
+          if (err) return res.status(500).json({ message: "Session error" });
+          res.json({ message: "Logged in" });
         });
-      });
-    });
+      }
+    );
   });
 });
 
@@ -220,36 +222,7 @@ app.post('/login', loginLimiter, (req, res) => {
   if (!username || !password || username.length > 30 || password.length > 100) {
     return res.status(400).json({ message: 'Invalid input' });
   }
-  db.query('SELECT * FROM users WHERE username=?', [username], (err, result) => {
-    if (err) return res.status(500).json({ message: 'Server error' });
-    if (result.length === 0) return res.status(401).json({ message: 'Invalid credentials' });
-    const user = result[0];
-    bcrypt.compare(password, user.password, (err, isMatch) => {
-      if (!isMatch) return res.status(401).json({ message: 'Invalid credentials' });
-      db.query(
-  `DELETE FROM sessions WHERE data LIKE ?`,
-  [`%"id":${user.id}%`],
-  (deleteErr) => {
-    if (deleteErr) console.warn("⚠️ Could not clear old sessions:", deleteErr);
-    // ✅ NEW: Kill all previous sessions for this user before creating a new one
-db.query(
-  `DELETE FROM sessions WHERE data LIKE ?`,
-  [`%"id":${user.id}%`],
-  (deleteErr) => {
-    if (deleteErr) console.warn("⚠️ Could not clear old sessions:", deleteErr);
-
-    req.session.user = { id: user.id, username: user.username };
-    req.session.save((err) => {
-      if (err) return res.status(500).json({ message: "Session error" });
-      res.json({ message: "Logged in" });
-    });
-  }
-);
-  }
-);
-    });
-  });
-});
+  
 
 // ================= CURRENT USER =================
 app.get('/user-data', requireAuth, (req, res) => {
