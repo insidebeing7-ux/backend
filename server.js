@@ -214,7 +214,7 @@ app.post('/register', authLimiter, csrfProtection, validateRegister, (req, res) 
 
 // ================= LOGIN =================
 // ================= LOGIN =================
-app.post('/login', loginLimiter, (req, res) => {
+app.post('/login', loginLimiter,csrfProtection,  (req, res) => {
   const clean = (v) => typeof v === "string" ? v.trim() : "";
   const username = clean(req.body.username);
   const password = clean(req.body.password);
