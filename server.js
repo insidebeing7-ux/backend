@@ -226,11 +226,18 @@ app.post('/login', loginLimiter, (req, res) => {
     const user = result[0];
     bcrypt.compare(password, user.password, (err, isMatch) => {
       if (!isMatch) return res.status(401).json({ message: 'Invalid credentials' });
-      req.session.user = { id: user.id, username: user.username };
-      req.session.save((err) => {
-        if (err) return res.status(500).json({ message: "Session error" });
-        res.json({ message: "Logged in" });
-      });
+      db.query(
+  `DELETE FROM sessions WHERE data LIKE ?`,
+  [`%"id":${user.id}%`],
+  (deleteErr) => {
+    if (deleteErr) console.warn("⚠️ Could not clear old sessions:", deleteErr);
+    req.session.user = { id: user.id, username: user.username };
+    req.session.save((err) => {
+      if (err) return res.status(500).json({ message: "Session error" });
+      res.json({ message: "Logged in" });
+    });
+  }
+);
     });
   });
 });
@@ -476,14 +483,24 @@ app.get('/user-by-id/:id', requireAuth, (req, res) => {
 });
 
 // ================= LOGOUT =================
-app.post('/logout', (req, res) => {
-  req.session.destroy(err => {
-    if (err) return res.status(500).json({ message: 'Logout failed' });
-    res.clearCookie("chatapp.sid");
-    res.json({ message: 'Logged out' });
-  });
+app.post('/logout', requireAuth, (req, res) => {
+  const userId = req.session.user?.id;
+  db.query(
+    `DELETE FROM sessions WHERE data LIKE ?`,
+    [`%"id":${userId}%`],
+    (err) => {
+      if (err) {
+        req.session.destroy(() => {
+          res.clearCookie("chatapp.sid");
+          res.json({ message: 'Logged out (partial)' });
+        });
+        return;
+      }
+      res.clearCookie("chatapp.sid");
+      res.json({ message: 'Logged out from all devices' });
+    }
+  );
 });
-
 // ================= AI MODE =================
 app.post('/set-ai-mode', requireAuth, (req, res) => {
   let instructions = req.body.instructions || "";
