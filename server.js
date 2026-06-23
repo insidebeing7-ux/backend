@@ -231,11 +231,20 @@ app.post('/login', loginLimiter, (req, res) => {
   [`%"id":${user.id}%`],
   (deleteErr) => {
     if (deleteErr) console.warn("⚠️ Could not clear old sessions:", deleteErr);
+    // ✅ NEW: Kill all previous sessions for this user before creating a new one
+db.query(
+  `DELETE FROM sessions WHERE data LIKE ?`,
+  [`%"id":${user.id}%`],
+  (deleteErr) => {
+    if (deleteErr) console.warn("⚠️ Could not clear old sessions:", deleteErr);
+
     req.session.user = { id: user.id, username: user.username };
     req.session.save((err) => {
       if (err) return res.status(500).json({ message: "Session error" });
       res.json({ message: "Logged in" });
     });
+  }
+);
   }
 );
     });
