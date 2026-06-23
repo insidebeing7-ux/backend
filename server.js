@@ -591,10 +591,13 @@ const io = new Server(server, {
 });
 let activeCalls = new Map();
 
-function keepAIAlive() {
-  await axios.get(process.env.AI_URL + "/health", { timeout: 30000 }); // 30s
-    .then(() => console.log("✅ AI server pinged"))
-    .catch(err => console.warn("⚠️ AI ping failed:", err.message));
+async function keepAIAlive() {
+  try {
+    await axios.get(process.env.AI_URL + "/health", { timeout: 30000 });
+    console.log("✅ AI server pinged");
+  } catch (err) {
+    console.warn("⚠️ AI ping failed:", err.message);
+  }
 }
 setInterval(keepAIAlive, 13 * 60 * 1000);
 keepAIAlive();
