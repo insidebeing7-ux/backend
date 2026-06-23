@@ -592,7 +592,7 @@ const io = new Server(server, {
 let activeCalls = new Map();
 
 function keepAIAlive() {
-  axios.get(process.env.AI_URL + "/health", { timeout: 10000 })
+  await axios.get(process.env.AI_URL + "/health", { timeout: 30000 }); // 30s
     .then(() => console.log("✅ AI server pinged"))
     .catch(err => console.warn("⚠️ AI ping failed:", err.message));
 }
