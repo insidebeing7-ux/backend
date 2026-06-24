@@ -27,6 +27,7 @@ const uploadDir = path.join(__dirname, "uploads");
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
 
 const BLOCKED_EXTENSIONS = [".exe", ".bat", ".cmd", ".sh", ".php", ".py", ".rb", ".pl", ".cgi", ".msi", ".dll", ".vbs", ".ps1"];
+const AUDIO_EXTENSIONS = [".webm", ".ogg", ".mp3", ".mp4", ".m4a", ".wav", ".opus", ".aac"];
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MB
 
 const storage = multer.diskStorage({
@@ -368,11 +369,14 @@ app.post('/upload', requireAuth, upload.single("file"), async (req, res) => {
     const originalName = req.file.originalname.replace(/[<>&"]/g, ""); // basic sanitize for display
     const ext = path.extname(req.file.originalname).toLowerCase();
     const imageExts = [".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg"];
+    const audioExts = [".webm", ".ogg", ".mp3", ".mp4", ".m4a", ".wav", ".opus", ".aac"];
     const isImage = imageExts.includes(ext);
+    const isAudio = audioExts.includes(ext);
 
-    // images get a different prefix so the front-end can render them inline
     const content = isImage
       ? `🖼️ [${originalName}](${fileUrl})`
+      : isAudio
+      ? `🎤 [${originalName}](${fileUrl})`
       : `📎 [${originalName}](${fileUrl})`;
 
     db.query(
@@ -380,14 +384,29 @@ app.post('/upload', requireAuth, upload.single("file"), async (req, res) => {
       [sender_id, receiver_id, content],
       (err) => {
         if (err) { console.error("❌ UPLOAD DB ERROR:", err); return res.status(500).json({ message: "DB error" }); }
-        res.json({ ok: true, url: fileUrl, isImage });
+        res.json({ ok: true, url: fileUrl, isImage, isAudio });
       }
     );
   });
 });
 
 // ================= SERVE UPLOADS (auth-protected) =================
-app.use("/uploads", requireAuth, express.static(path.join(__dirname, "uploads")));
+app.use("/uploads", requireAuth, express.static(path.join(__dirname, "uploads"), {
+  setHeaders: (res, filePath) => {
+    const ext = path.extname(filePath).toLowerCase();
+    const mimeMap = {
+      ".webm": "audio/webm",
+      ".ogg":  "audio/ogg",
+      ".opus": "audio/ogg; codecs=opus",
+      ".mp3":  "audio/mpeg",
+      ".mp4":  "audio/mp4",
+      ".m4a":  "audio/mp4",
+      ".wav":  "audio/wav",
+      ".aac":  "audio/aac",
+    };
+    if (mimeMap[ext]) res.setHeader("Content-Type", mimeMap[ext]);
+  }
+}));
 
 // ================= AI SEND =================
 app.post('/ai-send', aiLimiter, requireAuth, perUserRateLimit, async (req, res) => {
