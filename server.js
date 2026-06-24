@@ -89,7 +89,7 @@ app.use(cors({
   origin: process.env.CLIENT_URL,
   credentials: true,
   methods: ["GET", "POST"],
-  allowedHeaders: ["Content-Type", "X-CSRF-Token"]
+  allowedHeaders: ["Content-Type", "X-CSRF-Token", "x-csrf-token"]
 }));
 
 // ================= JSON =================
