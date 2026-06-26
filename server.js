@@ -27,7 +27,6 @@ const AUDIO_EXTENSIONS = [".webm", ".ogg", ".mp3", ".mp4", ".m4a", ".wav", ".opu
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MB
 
 const cloudinary = require("cloudinary").v2;
-const { CloudinaryStorage } = require("multer-storage-cloudinary");
 
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -35,17 +34,10 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-const storage = new CloudinaryStorage({
-  cloudinary,
-  params: {
-    folder: "chat_uploads",
-    resource_type: "auto",
-    public_id: (req, file) => `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-  },
-});
-
+// Files are held in memory only long enough to stream to Cloudinary —
+// nothing touches local disk, so nothing gets wiped on restart.
 const upload = multer({
-  storage,
+  storage: multer.memoryStorage(),
   limits: { fileSize: MAX_UPLOAD_BYTES },
   fileFilter: (req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();
@@ -55,6 +47,20 @@ const upload = multer({
     cb(null, true);
   }
 });
+
+// Helper: upload an in-memory buffer to Cloudinary and resolve with the result
+function uploadBufferToCloudinary(buffer) {
+  return new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      { folder: "chat_uploads", resource_type: "auto" },
+      (error, result) => {
+        if (error) return reject(error);
+        resolve(result);
+      }
+    );
+    stream.end(buffer);
+  });
+}
 // ===== END MULTER SETUP =====
 
 const aiUserQuota = new Map();
@@ -366,11 +372,19 @@ app.post('/upload', requireAuth, upload.single("file"), async (req, res) => {
   }
 
   // check receiver exists
-  db.query("SELECT id FROM users WHERE id=?", [receiver_id], (err, result) => {
+  db.query("SELECT id FROM users WHERE id=?", [receiver_id], async (err, result) => {
     if (err) return res.status(500).json({ message: "Server error" });
     if (result.length === 0) return res.status(404).json({ message: "Receiver does not exist" });
 
-    const fileUrl = req.file.path;
+    let cloudResult;
+    try {
+      cloudResult = await uploadBufferToCloudinary(req.file.buffer);
+    } catch (uploadErr) {
+      console.error("❌ CLOUDINARY UPLOAD ERROR:", uploadErr);
+      return res.status(500).json({ message: "File upload failed" });
+    }
+
+    const fileUrl = cloudResult.secure_url;
     const originalName = req.file.originalname.replace(/[<>&"]/g, ""); // basic sanitize for display
     const ext = path.extname(req.file.originalname).toLowerCase();
     const imageExts = [".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg"];
