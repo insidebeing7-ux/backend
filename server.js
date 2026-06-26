@@ -392,6 +392,7 @@ app.post('/upload', requireAuth, upload.single("file"), async (req, res) => {
 
 // ================= SERVE UPLOADS (auth-protected) =================
 app.use("/uploads", requireAuth, express.static(path.join(__dirname, "uploads"), {
+  acceptRanges: true,
   setHeaders: (res, filePath) => {
     const ext = path.extname(filePath).toLowerCase();
     const mimeMap = {
@@ -405,6 +406,7 @@ app.use("/uploads", requireAuth, express.static(path.join(__dirname, "uploads"),
       ".aac":  "audio/aac",
     };
     if (mimeMap[ext]) res.setHeader("Content-Type", mimeMap[ext]);
+    res.setHeader("Accept-Ranges", "bytes");
   }
 }));
 
