@@ -41,6 +41,12 @@ console.log("☁️ Cloudinary config check:", {
   api_secret: process.env.CLOUDINARY_API_SECRET ? process.env.CLOUDINARY_API_SECRET.slice(0, 4) + "****" : "MISSING",
 });
 
+// Hard crash if credentials are missing — prevents silent fallback to broken state
+if (!process.env.CLOUDINARY_CLOUD_NAME || !process.env.CLOUDINARY_API_KEY || !process.env.CLOUDINARY_API_SECRET) {
+  console.error("❌ FATAL: Cloudinary environment variables are missing. Set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET in Render.");
+  process.exit(1);
+}
+
 // Files are held in memory only long enough to stream to Cloudinary —
 // nothing touches local disk, so nothing gets wiped on restart.
 const upload = multer({
