@@ -34,6 +34,13 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
+// Startup check — prints partial values so you can verify without exposing secrets
+console.log("☁️ Cloudinary config check:", {
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME || "MISSING",
+  api_key: process.env.CLOUDINARY_API_KEY ? process.env.CLOUDINARY_API_KEY.slice(0, 4) + "****" : "MISSING",
+  api_secret: process.env.CLOUDINARY_API_SECRET ? process.env.CLOUDINARY_API_SECRET.slice(0, 4) + "****" : "MISSING",
+});
+
 // Files are held in memory only long enough to stream to Cloudinary —
 // nothing touches local disk, so nothing gets wiped on restart.
 const upload = multer({
@@ -49,10 +56,16 @@ const upload = multer({
 });
 
 // Helper: upload an in-memory buffer to Cloudinary and resolve with the result
-function uploadBufferToCloudinary(buffer) {
+function uploadBufferToCloudinary(buffer, mimetype) {
+  // Cloudinary requires resource_type "video" for audio files (mp3, m4a, aac, etc.)
+  // "auto" sometimes misclassifies audio and produces unplayable signed URLs
+  const isAudio = mimetype && mimetype.startsWith("audio/");
+  const isVideo = mimetype && mimetype.startsWith("video/");
+  const resourceType = (isAudio || isVideo) ? "video" : "image";
+
   return new Promise((resolve, reject) => {
     const stream = cloudinary.uploader.upload_stream(
-      { folder: "chat_uploads", resource_type: "auto" },
+      { folder: "chat_uploads", resource_type: resourceType },
       (error, result) => {
         if (error) return reject(error);
         resolve(result);
@@ -377,8 +390,8 @@ app.post('/upload', requireAuth, upload.single("file"), async (req, res) => {
     if (result.length === 0) return res.status(404).json({ message: "Receiver does not exist" });
 
     let cloudResult;
-    try {
-      cloudResult = await uploadBufferToCloudinary(req.file.buffer);
+   try {
+      cloudResult = await uploadBufferToCloudinary(req.file.buffer, req.file.mimetype);
     } catch (uploadErr) {
       console.error("❌ CLOUDINARY UPLOAD ERROR:", uploadErr);
       return res.status(500).json({ message: "File upload failed" });
