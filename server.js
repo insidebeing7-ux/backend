@@ -22,21 +22,26 @@ const { validateRegister } = require("./middleware/validate");
 const userRateMap = {};
 const perUserRateLimit = require("./middleware/rateLimitPerUser");
 
-// ===== MULTER SETUP =====
-const uploadDir = path.join(__dirname, "uploads");
-if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
-
 const BLOCKED_EXTENSIONS = [".exe", ".bat", ".cmd", ".sh", ".php", ".py", ".rb", ".pl", ".cgi", ".msi", ".dll", ".vbs", ".ps1"];
 const AUDIO_EXTENSIONS = [".webm", ".ogg", ".mp3", ".mp4", ".m4a", ".wav", ".opus", ".aac"];
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MB
 
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, uploadDir),
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname).toLowerCase().replace(/[^a-z0-9.]/g, "");
-    const safeName = `${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`;
-    cb(null, safeName);
-  }
+const cloudinary = require("cloudinary").v2;
+const { CloudinaryStorage } = require("multer-storage-cloudinary");
+
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
+
+const storage = new CloudinaryStorage({
+  cloudinary,
+  params: {
+    folder: "chat_uploads",
+    resource_type: "auto",
+    public_id: (req, file) => `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  },
 });
 
 const upload = multer({
@@ -365,14 +370,13 @@ app.post('/upload', requireAuth, upload.single("file"), async (req, res) => {
     if (err) return res.status(500).json({ message: "Server error" });
     if (result.length === 0) return res.status(404).json({ message: "Receiver does not exist" });
 
-    const fileUrl = `/uploads/${req.file.filename}`;
+    const fileUrl = req.file.path;
     const originalName = req.file.originalname.replace(/[<>&"]/g, ""); // basic sanitize for display
     const ext = path.extname(req.file.originalname).toLowerCase();
     const imageExts = [".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg"];
     const audioExts = [".webm", ".ogg", ".mp3", ".mp4", ".m4a", ".wav", ".opus", ".aac"];
     const isImage = imageExts.includes(ext);
     const isAudio = audioExts.includes(ext);
-
     const content = isImage
       ? `🖼️ [${originalName}](${fileUrl})`
       : isAudio
@@ -390,25 +394,7 @@ app.post('/upload', requireAuth, upload.single("file"), async (req, res) => {
   });
 });
 
-// ================= SERVE UPLOADS (auth-protected) =================
-app.use("/uploads", requireAuth, express.static(path.join(__dirname, "uploads"), {
-  acceptRanges: true,
-  setHeaders: (res, filePath) => {
-    const ext = path.extname(filePath).toLowerCase();
-    const mimeMap = {
-      ".webm": "audio/webm",
-      ".ogg":  "audio/ogg",
-      ".opus": "audio/ogg; codecs=opus",
-      ".mp3":  "audio/mpeg",
-      ".mp4":  "audio/mp4",
-      ".m4a":  "audio/mp4",
-      ".wav":  "audio/wav",
-      ".aac":  "audio/aac",
-    };
-    if (mimeMap[ext]) res.setHeader("Content-Type", mimeMap[ext]);
-    res.setHeader("Accept-Ranges", "bytes");
-  }
-}));
+
 
 // ================= AI SEND =================
 app.post('/ai-send', aiLimiter, requireAuth, perUserRateLimit, async (req, res) => {
