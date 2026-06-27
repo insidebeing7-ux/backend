@@ -117,7 +117,9 @@ const port = process.env.PORT || 3000;
 
 // ================= CORS =================
 app.use(cors({
-  origin: process.env.CLIENT_URL,
+  origin: function(origin, callback) {
+    callback(null, true); // allow Android (no origin) + web
+  },
   credentials: true,
   methods: ["GET", "POST"],
   allowedHeaders: ["Content-Type", "X-CSRF-Token", "x-csrf-token"]
@@ -644,7 +646,10 @@ app.get('/get-auto-ai', requireAuth, (req, res) => {
 const server = http.createServer(app);
 const { Server } = require("socket.io");
 const io = new Server(server, {
-  cors: { origin: process.env.CLIENT_URL, credentials: true },
+  cors: { 
+    origin: [process.env.CLIENT_URL, "null", "*"],
+    credentials: true 
+  },
   transports: ["websocket", "polling"]
 });
 let activeCalls = new Map();
