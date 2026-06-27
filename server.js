@@ -525,22 +525,31 @@ app.get('/user-by-id/:id', requireAuth, (req, res) => {
   });
 });
 
-// ================= LOGOUT =================
 app.post('/logout', requireAuth, (req, res) => {
   const userId = req.session.user?.id;
   db.query(
     `DELETE FROM sessions WHERE data LIKE ?`,
     [`%"id":${userId}%`],
     (err) => {
-      if (err) {
-        req.session.destroy(() => {
-          res.clearCookie("chatapp.sid");
-          res.json({ message: 'Logged out (partial)' });
+      // Always destroy THIS request's in-memory session too — otherwise
+      // express-session can resave/touch it after the handler returns and
+      // silently recreate the row + cookie we just tried to clear.
+      req.session.destroy((destroyErr) => {
+        // Match the attributes used when the cookie was originally set,
+        // or some clients won't actually drop it.
+        res.clearCookie("chatapp.sid", {
+          path: "/",
+          httpOnly: true,
+          sameSite: "none",
+          secure: true
         });
-        return;
-      }
-      res.clearCookie("chatapp.sid");
-      res.json({ message: 'Logged out from all devices' });
+
+        if (err || destroyErr) {
+          console.error("⚠️ Logout cleanup error:", err || destroyErr);
+          return res.json({ message: 'Logged out (partial)' });
+        }
+        res.json({ message: 'Logged out from all devices' });
+      });
     }
   );
 });
