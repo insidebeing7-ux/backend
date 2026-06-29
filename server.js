@@ -64,8 +64,14 @@ const upload = multer({
 // Helper: upload an in-memory buffer to Cloudinary and resolve with the result
 function uploadBufferToCloudinary(buffer, mimetype) {
   // Cloudinary requires resource_type "video" for audio files (mp3, m4a, aac, etc.)
-  // "auto" sometimes misclassifies audio and produces unplayable signed URLs
-  const isAudio = mimetype && mimetype.startsWith("audio/");
+  // "auto" sometimes misclassifies AMR/3GP as "raw" which produces unplayable URLs.
+  // Explicitly list all audio MIME types including Android AMR variants.
+  const isAudio = mimetype && (
+    mimetype.startsWith("audio/") ||
+    mimetype === "audio/3gpp"     ||   // Android AMR-NB in 3GP container
+    mimetype === "audio/amr"      ||   // bare AMR
+    mimetype === "application/octet-stream"  // mis-labeled fallback
+  );
   const isVideo = mimetype && mimetype.startsWith("video/");
   const resourceType = (isAudio || isVideo) ? "video" : "image";
 
