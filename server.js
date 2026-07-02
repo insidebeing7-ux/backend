@@ -791,7 +791,36 @@ io.on("connection", (socket) => {
         io.to(String(calleeId)).emit("missed-call-saved", { caller_id: callerId, callee_id: calleeId });
       }
     );
-  });
+});
+
+// NEW — single handler for all call outcomes (completed / missed / declined)
+socket.on("save-call-log", (data) => {
+    if (!socket.userId) return;
+    const callerId = Number(data.caller_id);
+    const calleeId = Number(data.callee_id);
+    const status = data.status; // "completed" | "missed" | "declined"
+    const duration = Number(data.duration) || 0;
+    if (!Number.isInteger(callerId) || !Number.isInteger(calleeId)) return;
+
+    let content;
+    if (status === "missed") content = "📵 Missed call";
+    else if (status === "declined") content = "📵 Call declined";
+    else {
+      const mins = Math.floor(duration / 60);
+      const secs = duration % 60;
+      content = `📞 Call · ${mins}:${secs.toString().padStart(2, "0")}`;
+    }
+
+    db.query(
+      "INSERT INTO messages (sender_id, receiver_id, content) VALUES (?,?,?)",
+      [callerId, calleeId, content],
+      (err) => {
+        if (err) { console.error("❌ CALL LOG DB ERROR:", err); return; }
+        io.to(String(callerId)).emit("call-log-saved", { caller_id: callerId, callee_id: calleeId, status });
+        io.to(String(calleeId)).emit("call-log-saved", { caller_id: callerId, callee_id: calleeId, status });
+      }
+    );
+});
   socket.on("disconnect", () => {
     console.log("❌ Disconnected:", socket.id);
     const roomsToDelete = [];
