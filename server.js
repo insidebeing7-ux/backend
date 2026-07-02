@@ -368,17 +368,24 @@ app.get('/messages', requireAuth, (req, res) => {
   const userId = req.session.user.id;
   const receiver_id = parseInt(req.query.receiver_id);
   if (!Number.isInteger(receiver_id)) return res.status(400).json({ message: "Invalid receiver_id" });
-  if (!receiver_id) return res.status(400).json({ message: 'Invalid receiver_id' });
 
   db.query(
     `SELECT * FROM messages
-     WHERE (sender_id=? AND receiver_id=?)
-     OR (sender_id=? AND receiver_id=?)
+     WHERE ((sender_id=? AND receiver_id=?) OR (sender_id=? AND receiver_id=?))
+       AND NOT (sender_id=? AND deleted_for_sender=1)
+       AND NOT (receiver_id=? AND deleted_for_receiver=1)
      ORDER BY id ASC`,
-    [userId, receiver_id, receiver_id, userId],
+    [userId, receiver_id, receiver_id, userId, userId, userId],
     (err, result) => {
       if (err) { console.error("🔥 DB ERROR:", err); return res.status(500).json({ message: 'Error fetching messages' }); }
-      res.json(result);
+      const mapped = result.map(m => ({
+        id: m.id,
+        sender_id: m.sender_id,
+        receiver_id: m.receiver_id,
+        content: m.deleted_for_everyone ? "This message was deleted" : m.content,
+        deleted: !!m.deleted_for_everyone
+      }));
+      res.json(mapped);
     }
   );
 });
@@ -836,7 +843,45 @@ socket.on("save-call-log", (data) => {
     }
   });
 });
+app.post('/delete-message', requireAuth, csrfProtection, (req, res) => {
+  const userId = req.session.user.id;
+  const messageId = Number(req.body.message_id);
+  const mode = req.body.mode; // "me" | "everyone"
 
+  if (!Number.isInteger(messageId)) return res.status(400).json({ message: "Invalid message_id" });
+  if (!["me", "everyone"].includes(mode)) return res.status(400).json({ message: "Invalid mode" });
+
+  db.query("SELECT * FROM messages WHERE id=?", [messageId], (err, result) => {
+    if (err) return res.status(500).json({ message: "Server error" });
+    if (result.length === 0) return res.status(404).json({ message: "Message not found" });
+    const msg = result[0];
+
+    if (msg.sender_id !== userId && msg.receiver_id !== userId) {
+      return res.status(403).json({ message: "Not authorized" });
+    }
+
+    if (mode === "everyone") {
+      // Only the original sender can delete for everyone
+      if (msg.sender_id !== userId) {
+        return res.status(403).json({ message: "Only the sender can delete for everyone" });
+      }
+      db.query("UPDATE messages SET deleted_for_everyone=1 WHERE id=?", [messageId], (err) => {
+        if (err) return res.status(500).json({ message: "DB error" });
+        io.to(String(msg.sender_id)).emit("message-deleted", { message_id: messageId, mode: "everyone" });
+        io.to(String(msg.receiver_id)).emit("message-deleted", { message_id: messageId, mode: "everyone" });
+        res.json({ message: "Deleted for everyone" });
+      });
+    } else {
+      // "Delete for me" — only affects the requesting user's own view
+      const column = msg.sender_id === userId ? "deleted_for_sender" : "deleted_for_receiver";
+      db.query(`UPDATE messages SET ${column}=1 WHERE id=?`, [messageId], (err) => {
+        if (err) return res.status(500).json({ message: "DB error" });
+        io.to(String(userId)).emit("message-deleted", { message_id: messageId, mode: "me" });
+        res.json({ message: "Deleted for you" });
+      });
+    }
+  });
+});
 // ================= ERROR HANDLER =================
 app.use((err, req, res, next) => {
   if (err instanceof multer.MulterError) {
