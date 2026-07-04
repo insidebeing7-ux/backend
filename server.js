@@ -109,7 +109,8 @@ app.use(helmet({
         "wss://chatflow-ai-o3e6.onrender.com",
         "https://backend-vz58.onrender.com",
         "wss://backend-vz58.onrender.com",
-        "turn:openrelay.metered.ca",
+        "turn:global.relay.metered.ca",
+
         "stun:stun.l.google.com",
         "stun:stun1.l.google.com",
         "stun:",
