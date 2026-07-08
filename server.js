@@ -265,6 +265,7 @@ app.post('/auth/google', loginLimiter, async (req, res) => {
   }
 
   let payload;
+  console.log("🔍 GOOGLE_CLIENT_ID being used:", GOOGLE_CLIENT_ID); // NEW — temporary
   try {
     const ticket = await googleClient.verifyIdToken({
       idToken,
@@ -273,6 +274,7 @@ app.post('/auth/google', loginLimiter, async (req, res) => {
     payload = ticket.getPayload();
   } catch (err) {
     console.error("❌ GOOGLE TOKEN VERIFY ERROR:", err.message);
+    console.error("❌ FULL ERROR:", err); // NEW — temporary, remove after debugging
     return res.status(401).json({ message: "Invalid Google token" });
   }
 
