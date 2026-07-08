@@ -21,6 +21,9 @@ const { requireAuth } = require("./middleware/auth");
 const { validateRegister } = require("./middleware/validate");
 const userRateMap = {};
 const perUserRateLimit = require("./middleware/rateLimitPerUser");
+const { OAuth2Client } = require('google-auth-library');
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "688424361924-0fknnueaq41ai60uh813q1vlk3elfclq.apps.googleusercontent.com";
+const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID);
 
 const BLOCKED_EXTENSIONS = [".exe", ".bat", ".cmd", ".sh", ".php", ".py", ".rb", ".pl", ".cgi", ".msi", ".dll", ".vbs", ".ps1"];
 const AUDIO_EXTENSIONS = [".webm", ".ogg", ".mp3", ".mp4", ".m4a", ".wav", ".opus", ".aac"];
@@ -254,6 +257,77 @@ app.post('/register', authLimiter, csrfProtection, validateRegister, (req, res) 
 
 // ================= LOGIN =================
 // ================= LOGIN =================
+// ================= GOOGLE AUTH =================
+app.post('/auth/google', loginLimiter, async (req, res) => {
+  const { idToken } = req.body;
+  if (typeof idToken !== "string" || !idToken) {
+    return res.status(400).json({ message: "Missing idToken" });
+  }
+
+  let payload;
+  try {
+    const ticket = await googleClient.verifyIdToken({
+      idToken,
+      audience: GOOGLE_CLIENT_ID,
+    });
+    payload = ticket.getPayload();
+  } catch (err) {
+    console.error("❌ GOOGLE TOKEN VERIFY ERROR:", err.message);
+    return res.status(401).json({ message: "Invalid Google token" });
+  }
+
+  const googleId = payload.sub;
+  const email = payload.email;
+  if (!googleId || !email) {
+    return res.status(400).json({ message: "Incomplete Google account info" });
+  }
+
+  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+
+  db.query('SELECT * FROM users WHERE google_id=?', [googleId], (err, result) => {
+    if (err) return res.status(500).json({ message: 'Server error' });
+
+    const finishLogin = (user) => {
+      db.query(`DELETE FROM sessions WHERE data LIKE ?`, [`%"id":${user.id}%`], () => {
+        req.session.user = { id: user.id, username: user.username };
+        req.session.save((err) => {
+          if (err) return res.status(500).json({ message: "Session error" });
+          res.json({ message: "Logged in with Google", isNewUser: false });
+        });
+      });
+    };
+
+    if (result.length > 0) {
+      return finishLogin(result[0]);
+    }
+
+    let base = email.split('@')[0].replace(/[^a-zA-Z0-9_]/g, '').slice(0, 20);
+    if (base.length < 3) base = base + "user";
+
+    const tryCreate = (candidate, attempt) => {
+      db.query('SELECT id FROM users WHERE username=?', [candidate], (err, existing) => {
+        if (err) return res.status(500).json({ message: 'Server error' });
+        if (existing.length > 0) {
+          if (attempt > 5) return res.status(500).json({ message: 'Could not allocate username' });
+          return tryCreate(base + Math.floor(Math.random() * 10000), attempt + 1);
+        }
+        db.query(
+          'INSERT INTO users (username, password, signup_ip, google_id, agreed_terms) VALUES (?,?,?,?,?)',
+          [candidate, null, ip, googleId, 1],
+          (err, insertResult) => {
+            if (err) return res.status(500).json({ message: 'Server error' });
+            finishLogin({ id: insertResult.insertId, username: candidate });
+          }
+        );
+      });
+    };
+
+    tryCreate(base, 0);
+  });
+});
+
+// ================= LOGIN =================
+// ================= LOGIN =================
 app.post('/login', loginLimiter,  (req, res) => {
   const clean = (v) => typeof v === "string" ? v.trim() : "";
   const username = clean(req.body.username);
@@ -265,6 +339,9 @@ app.post('/login', loginLimiter,  (req, res) => {
     if (err) return res.status(500).json({ message: 'Server error' });
     if (result.length === 0) return res.status(401).json({ message: 'Invalid credentials' });
     const user = result[0];
+    if (!user.password) {
+      return res.status(400).json({ message: 'This account uses Google sign-in. Please continue with Google.' });
+    }
     bcrypt.compare(password, user.password, (err, isMatch) => {
       if (!isMatch) return res.status(401).json({ message: 'Invalid credentials' });
       db.query(
