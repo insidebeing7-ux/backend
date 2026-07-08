@@ -22,7 +22,7 @@ const { validateRegister } = require("./middleware/validate");
 const userRateMap = {};
 const perUserRateLimit = require("./middleware/rateLimitPerUser");
 const { OAuth2Client } = require('google-auth-library');
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "688424361924-0fknnueaq41ai60uh813q1vlk3elfclq.apps.googleusercontent.com";
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "688424361924-drqcfv2qovlnf8i5htakiihe9i4peuv2.apps.googleusercontent.com";
 const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID);
 
 const BLOCKED_EXTENSIONS = [".exe", ".bat", ".cmd", ".sh", ".php", ".py", ".rb", ".pl", ".cgi", ".msi", ".dll", ".vbs", ".ps1"];
