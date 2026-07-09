@@ -290,14 +290,13 @@ app.post('/auth/google', loginLimiter, async (req, res) => {
     // CHANGED — finishLogin now accepts isNewUser and passes it through
     const finishLogin = (user, isNewUser = false) => {
       db.query(`DELETE FROM sessions WHERE data LIKE ?`, [`%"id":${user.id}%`], () => {
-        req.session.user = { id: user.id, username: user.username };
+        req.session.user = { id: user.id, username: user.username, email: user.email || null };
         req.session.save((err) => {
           if (err) return res.status(500).json({ message: "Session error" });
           res.json({ message: "Logged in with Google", isNewUser });
         });
       });
     };
-
     if (result.length > 0) {
       return finishLogin(result[0], false); // CHANGED — explicit false for existing account
     }
@@ -313,11 +312,11 @@ app.post('/auth/google', loginLimiter, async (req, res) => {
           return tryCreate(base + Math.floor(Math.random() * 10000), attempt + 1);
         }
         db.query(
-          'INSERT INTO users (username, password, signup_ip, google_id, agreed_terms) VALUES (?,?,?,?,?)',
-          [candidate, null, ip, googleId, 1],
+          'INSERT INTO users (username, password, signup_ip, google_id, email, agreed_terms) VALUES (?,?,?,?,?,?)',
+          [candidate, null, ip, googleId, email, 1],
           (err, insertResult) => {
             if (err) return res.status(500).json({ message: 'Server error' });
-            finishLogin({ id: insertResult.insertId, username: candidate }, true); // CHANGED — true for brand-new account
+            finishLogin({ id: insertResult.insertId, username: candidate, email }, true); // CHANGED — true for brand-new account
           }
         );
       });
