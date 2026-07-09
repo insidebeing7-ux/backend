@@ -287,8 +287,8 @@ app.post('/auth/google', loginLimiter, async (req, res) => {
   db.query('SELECT * FROM users WHERE google_id=?', [googleId], (err, result) => {
     if (err) return res.status(500).json({ message: 'Server error' });
 
-    // CHANGED — finishLogin now accepts isNewUser and reports it accurately
-    const finishLogin = (user, isNewUser) => {
+    // CHANGED — finishLogin now accepts isNewUser and passes it through
+    const finishLogin = (user, isNewUser = false) => {
       db.query(`DELETE FROM sessions WHERE data LIKE ?`, [`%"id":${user.id}%`], () => {
         req.session.user = { id: user.id, username: user.username };
         req.session.save((err) => {
@@ -299,8 +299,7 @@ app.post('/auth/google', loginLimiter, async (req, res) => {
     };
 
     if (result.length > 0) {
-      // CHANGED — existing account found, so this is definitely not new
-      return finishLogin(result[0], false);
+      return finishLogin(result[0], false); // CHANGED — explicit false for existing account
     }
 
     let base = email.split('@')[0].replace(/[^a-zA-Z0-9_]/g, '').slice(0, 20);
@@ -318,8 +317,7 @@ app.post('/auth/google', loginLimiter, async (req, res) => {
           [candidate, null, ip, googleId, 1],
           (err, insertResult) => {
             if (err) return res.status(500).json({ message: 'Server error' });
-            // CHANGED — brand-new row just inserted, so this IS a new user
-            finishLogin({ id: insertResult.insertId, username: candidate }, true);
+            finishLogin({ id: insertResult.insertId, username: candidate }, true); // CHANGED — true for brand-new account
           }
         );
       });
