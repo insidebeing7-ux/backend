@@ -265,7 +265,6 @@ app.post('/auth/google', loginLimiter, async (req, res) => {
   }
 
   let payload;
-  console.log("🔍 GOOGLE_CLIENT_ID being used:", GOOGLE_CLIENT_ID); // NEW — temporary
   try {
     const ticket = await googleClient.verifyIdToken({
       idToken,
@@ -274,7 +273,6 @@ app.post('/auth/google', loginLimiter, async (req, res) => {
     payload = ticket.getPayload();
   } catch (err) {
     console.error("❌ GOOGLE TOKEN VERIFY ERROR:", err.message);
-    console.error("❌ FULL ERROR:", err); // NEW — temporary, remove after debugging
     return res.status(401).json({ message: "Invalid Google token" });
   }
 
@@ -289,18 +287,20 @@ app.post('/auth/google', loginLimiter, async (req, res) => {
   db.query('SELECT * FROM users WHERE google_id=?', [googleId], (err, result) => {
     if (err) return res.status(500).json({ message: 'Server error' });
 
-    const finishLogin = (user) => {
+    // CHANGED — finishLogin now accepts isNewUser and reports it accurately
+    const finishLogin = (user, isNewUser) => {
       db.query(`DELETE FROM sessions WHERE data LIKE ?`, [`%"id":${user.id}%`], () => {
         req.session.user = { id: user.id, username: user.username };
         req.session.save((err) => {
           if (err) return res.status(500).json({ message: "Session error" });
-          res.json({ message: "Logged in with Google", isNewUser: false });
+          res.json({ message: "Logged in with Google", isNewUser });
         });
       });
     };
 
     if (result.length > 0) {
-      return finishLogin(result[0]);
+      // CHANGED — existing account found, so this is definitely not new
+      return finishLogin(result[0], false);
     }
 
     let base = email.split('@')[0].replace(/[^a-zA-Z0-9_]/g, '').slice(0, 20);
@@ -318,7 +318,8 @@ app.post('/auth/google', loginLimiter, async (req, res) => {
           [candidate, null, ip, googleId, 1],
           (err, insertResult) => {
             if (err) return res.status(500).json({ message: 'Server error' });
-            finishLogin({ id: insertResult.insertId, username: candidate });
+            // CHANGED — brand-new row just inserted, so this IS a new user
+            finishLogin({ id: insertResult.insertId, username: candidate }, true);
           }
         );
       });
