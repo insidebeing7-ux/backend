@@ -287,24 +287,24 @@ app.post('/auth/google', loginLimiter, async (req, res) => {
   db.query('SELECT * FROM users WHERE google_id=?', [googleId], (err, result) => {
     if (err) return res.status(500).json({ message: 'Server error' });
 
-    // CHANGED — finishLogin now accepts isNewUser and passes it through
+    // finishLogin now also reports agreed_terms so the client knows
+    // whether to show the Terms dialog — for BOTH new and existing users
     const finishLogin = (user, isNewUser = false) => {
-  db.query(`DELETE FROM sessions WHERE data LIKE ?`, [`%"id":${user.id}%`], () => {
-    req.session.user = { id: user.id, username: user.username, email: user.email || null };
-    req.session.save((err) => {
-      if (err) return res.status(500).json({ message: "Session error" });
-      // CHANGED — always report current agreed_terms state, for both new and existing users
-      res.json({
-        message: "Logged in with Google",
-        isNewUser,
-        agreedTerms: !!user.agreed_terms
+      db.query(`DELETE FROM sessions WHERE data LIKE ?`, [`%"id":${user.id}%`], () => {
+        req.session.user = { id: user.id, username: user.username, email: user.email || null };
+        req.session.save((err) => {
+          if (err) return res.status(500).json({ message: "Session error" });
+          res.json({
+            message: "Logged in with Google",
+            isNewUser,
+            agreedTerms: !!user.agreed_terms // NEW
+          });
+        });
       });
-    });
-  });
-};
-if (result.length > 0) {
-  return finishLogin(result[0], false); // existing account — but may still be unagreed
-}
+    };
+    if (result.length > 0) {
+      return finishLogin(result[0], false); // existing account — may still be unagreed
+    }
 
     let base = email.split('@')[0].replace(/[^a-zA-Z0-9_]/g, '').slice(0, 20);
     if (base.length < 3) base = base + "user";
@@ -318,10 +318,10 @@ if (result.length > 0) {
         }
         db.query(
           'INSERT INTO users (username, password, signup_ip, google_id, email, agreed_terms) VALUES (?,?,?,?,?,?)',
-          [candidate, null, ip, googleId, email, 1],
+          [candidate, null, ip, googleId, email, 0], // CHANGED — 0, not agreed until they accept
           (err, insertResult) => {
             if (err) return res.status(500).json({ message: 'Server error' });
-            finishLogin({ id: insertResult.insertId, username: candidate, email }, true); // CHANGED — true for brand-new account
+            finishLogin({ id: insertResult.insertId, username: candidate, email, agreed_terms: 0 }, true);
           }
         );
       });
@@ -330,7 +330,14 @@ if (result.length > 0) {
     tryCreate(base, 0);
   });
 });
-
+// ================= ACCEPT TERMS =================
+app.post('/accept-terms', requireAuth, (req, res) => {
+  const userId = req.session.user.id;
+  db.query('UPDATE users SET agreed_terms=1 WHERE id=?', [userId], (err) => {
+    if (err) return res.status(500).json({ message: "Server error" });
+    res.json({ message: "Terms accepted" });
+  });
+});
 // ================= SET USERNAME (first-time Google sign-in) =================
 app.post('/set-username', requireAuth, (req, res) => {
   const userId = req.session.user.id;
@@ -436,8 +443,14 @@ app.post('/login', loginLimiter,  (req, res) => {
 });
 
 // ================= CURRENT USER =================
+// ================= CURRENT USER =================
 app.get('/user-data', requireAuth, (req, res) => {
-  res.json(req.session.user);
+  // CHANGED — now also returns agreedTerms so MainActivity/LoginActivity
+  // can gate existing users on every app launch, not just at signup
+  db.query('SELECT agreed_terms FROM users WHERE id=?', [req.session.user.id], (err, result) => {
+    if (err || result.length === 0) return res.status(500).json({ message: "Server error" });
+    res.json({ ...req.session.user, agreedTerms: !!result[0].agreed_terms });
+  });
 });
 
 // ================= CSRF TOKEN =================
