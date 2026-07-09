@@ -289,17 +289,22 @@ app.post('/auth/google', loginLimiter, async (req, res) => {
 
     // CHANGED — finishLogin now accepts isNewUser and passes it through
     const finishLogin = (user, isNewUser = false) => {
-      db.query(`DELETE FROM sessions WHERE data LIKE ?`, [`%"id":${user.id}%`], () => {
-        req.session.user = { id: user.id, username: user.username, email: user.email || null };
-        req.session.save((err) => {
-          if (err) return res.status(500).json({ message: "Session error" });
-          res.json({ message: "Logged in with Google", isNewUser });
-        });
+  db.query(`DELETE FROM sessions WHERE data LIKE ?`, [`%"id":${user.id}%`], () => {
+    req.session.user = { id: user.id, username: user.username, email: user.email || null };
+    req.session.save((err) => {
+      if (err) return res.status(500).json({ message: "Session error" });
+      // CHANGED — always report current agreed_terms state, for both new and existing users
+      res.json({
+        message: "Logged in with Google",
+        isNewUser,
+        agreedTerms: !!user.agreed_terms
       });
-    };
-    if (result.length > 0) {
-      return finishLogin(result[0], false); // CHANGED — explicit false for existing account
-    }
+    });
+  });
+};
+if (result.length > 0) {
+  return finishLogin(result[0], false); // existing account — but may still be unagreed
+}
 
     let base = email.split('@')[0].replace(/[^a-zA-Z0-9_]/g, '').slice(0, 20);
     if (base.length < 3) base = base + "user";
