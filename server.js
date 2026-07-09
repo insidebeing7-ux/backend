@@ -326,6 +326,31 @@ app.post('/auth/google', loginLimiter, async (req, res) => {
   });
 });
 
+// ================= SET USERNAME (first-time Google sign-in) =================
+app.post('/set-username', requireAuth, (req, res) => {
+  const userId = req.session.user.id;
+  const username = typeof req.body.username === "string" ? req.body.username.trim() : "";
+
+  const usernameRegex = /^[a-zA-Z0-9_]{3,20}$/;
+  if (!usernameRegex.test(username)) {
+    return res.status(400).json({ message: "Username must be 3-20 characters (letters, numbers, underscore)" });
+  }
+
+  db.query('SELECT id FROM users WHERE username=? AND id!=?', [username, userId], (err, existing) => {
+    if (err) return res.status(500).json({ message: "Server error" });
+    if (existing.length > 0) return res.status(409).json({ message: "Username already taken" });
+
+    db.query('UPDATE users SET username=? WHERE id=?', [username, userId], (updateErr) => {
+      if (updateErr) return res.status(500).json({ message: "Server error" });
+      req.session.user.username = username;
+      req.session.save((saveErr) => {
+        if (saveErr) return res.status(500).json({ message: "Session error" });
+        res.json({ message: "Username set" });
+      });
+    });
+  });
+});
+
 // ================= LOGIN =================
 // ================= LOGIN =================
 app.post('/login', loginLimiter,  (req, res) => {
