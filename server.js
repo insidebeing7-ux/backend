@@ -480,14 +480,21 @@ app.get('/user/:username', requireAuth, (req, res) => {
 });
 
 // ================= SEARCH USERS =================
+// ================= SEARCH USERS =================
 app.get('/search-users', authLimiter, requireAuth, (req, res) => {
-  const q = req.query.q || "";
-  if (!/^[a-zA-Z0-9_ ]*$/.test(q)) return res.status(400).json({ message: "Invalid search query" });
-  if (q.length > 50) return res.status(400).json({ message: "Query too long" });
+  const raw = req.query.q || "";
+  if (raw.length > 50) return res.status(400).json({ message: "Query too long" });
+
+  // Normalize the same way a Gmail-derived username is generated at signup
+  // (base = email.split('@')[0].replace(/[^a-zA-Z0-9_]/g, '')), so typing
+  // "john.doe" or "John Doe" still matches a stored username "johndoe99".
+  const normalized = raw.replace(/[^a-zA-Z0-9_]/g, "");
+  if (normalized.length === 0) return res.json([]);
+
   const userId = req.session.user?.id;
   db.query(
-    `SELECT id, username FROM users WHERE username LIKE ? AND id != ? LIMIT 10`,
-    [`%${q}%`, userId],
+    `SELECT id, username FROM users WHERE LOWER(username) LIKE LOWER(?) AND id != ? LIMIT 10`,
+    [`%${normalized}%`, userId],
     (err, result) => {
       if (err) { console.error("❌ SEARCH ERROR:", err); return res.status(500).json({ message: "Server error" }); }
       res.json(result);
