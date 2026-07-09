@@ -290,18 +290,19 @@ app.post('/auth/google', loginLimiter, async (req, res) => {
     // finishLogin now also reports agreed_terms so the client knows
     // whether to show the Terms dialog — for BOTH new and existing users
     const finishLogin = (user, isNewUser = false) => {
-      db.query(`DELETE FROM sessions WHERE data LIKE ?`, [`%"id":${user.id}%`], () => {
-        req.session.user = { id: user.id, username: user.username, email: user.email || null };
-        req.session.save((err) => {
-          if (err) return res.status(500).json({ message: "Session error" });
-          res.json({
-            message: "Logged in with Google",
-            isNewUser,
-            agreedTerms: !!user.agreed_terms // NEW
-          });
-        });
+  db.query(`DELETE FROM sessions WHERE data LIKE ?`, [`%"id":${user.id}%`], () => {
+    req.session.user = { id: user.id, username: user.username, email: user.email || null };
+    req.session.save((err) => {
+      if (err) return res.status(500).json({ message: "Session error" });
+      res.json({
+        message: "Logged in with Google",
+        isNewUser,
+        agreedTerms: !!user.agreed_terms,
+        usernameSet: !!user.username_set // NEW
       });
-    };
+    });
+  });
+};
     if (result.length > 0) {
       return finishLogin(result[0], false); // existing account — may still be unagreed
     }
@@ -316,14 +317,14 @@ app.post('/auth/google', loginLimiter, async (req, res) => {
           if (attempt > 5) return res.status(500).json({ message: 'Could not allocate username' });
           return tryCreate(base + Math.floor(Math.random() * 10000), attempt + 1);
         }
-        db.query(
-          'INSERT INTO users (username, password, signup_ip, google_id, email, agreed_terms) VALUES (?,?,?,?,?,?)',
-          [candidate, null, ip, googleId, email, 0], // CHANGED — 0, not agreed until they accept
-          (err, insertResult) => {
-            if (err) return res.status(500).json({ message: 'Server error' });
-            finishLogin({ id: insertResult.insertId, username: candidate, email, agreed_terms: 0 }, true);
-          }
-        );
+       db.query(
+  'INSERT INTO users (username, password, signup_ip, google_id, email, agreed_terms, username_set) VALUES (?,?,?,?,?,?,?)',
+  [candidate, null, ip, googleId, email, 0, 0], // username_set=0 — this is a placeholder, not a real choice
+  (err, insertResult) => {
+    if (err) return res.status(500).json({ message: 'Server error' });
+    finishLogin({ id: insertResult.insertId, username: candidate, email, agreed_terms: 0, username_set: 0 }, true);
+  }
+);
       });
     };
 
@@ -352,7 +353,7 @@ app.post('/set-username', requireAuth, (req, res) => {
     if (err) return res.status(500).json({ message: "Server error" });
     if (existing.length > 0) return res.status(409).json({ message: "Username already taken" });
 
-    db.query('UPDATE users SET username=? WHERE id=?', [username, userId], (updateErr) => {
+    db.query('UPDATE users SET username=?, username_set=1 WHERE id=?', [username, userId], (updateErr) => {
       if (updateErr) return res.status(500).json({ message: "Server error" });
       req.session.user.username = username;
       req.session.save((saveErr) => {
@@ -445,11 +446,13 @@ app.post('/login', loginLimiter,  (req, res) => {
 // ================= CURRENT USER =================
 // ================= CURRENT USER =================
 app.get('/user-data', requireAuth, (req, res) => {
-  // CHANGED — now also returns agreedTerms so MainActivity/LoginActivity
-  // can gate existing users on every app launch, not just at signup
-  db.query('SELECT agreed_terms FROM users WHERE id=?', [req.session.user.id], (err, result) => {
+  db.query('SELECT agreed_terms, username_set FROM users WHERE id=?', [req.session.user.id], (err, result) => {
     if (err || result.length === 0) return res.status(500).json({ message: "Server error" });
-    res.json({ ...req.session.user, agreedTerms: !!result[0].agreed_terms });
+    res.json({
+      ...req.session.user,
+      agreedTerms: !!result[0].agreed_terms,
+      usernameSet: !!result[0].username_set // NEW
+    });
   });
 });
 
