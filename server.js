@@ -353,6 +353,51 @@ app.post('/set-username', requireAuth, (req, res) => {
 
 // ================= LOGIN =================
 // ================= LOGIN =================
+// ================= CANCEL SIGNUP (user declined Terms right after Google signup) =================
+app.post('/cancel-signup', requireAuth, (req, res) => {
+  const userId = req.session.user.id;
+
+  // Only delete accounts that came from Google sign-up and have no messages yet —
+  // this guards against ever deleting a real, already-used account.
+  db.query(
+    'SELECT google_id FROM users WHERE id=?',
+    [userId],
+    (err, result) => {
+      if (err) return res.status(500).json({ message: "Server error" });
+      if (result.length === 0 || !result[0].google_id) {
+        return res.status(400).json({ message: "Not a Google signup account" });
+      }
+
+      db.query(
+        'SELECT id FROM messages WHERE sender_id=? OR receiver_id=? LIMIT 1',
+        [userId, userId],
+        (msgErr, msgResult) => {
+          if (msgErr) return res.status(500).json({ message: "Server error" });
+          if (msgResult.length > 0) {
+            return res.status(400).json({ message: "Account already in use" });
+          }
+
+          db.query('DELETE FROM users WHERE id=?', [userId], (delErr) => {
+            if (delErr) return res.status(500).json({ message: "Server error" });
+
+            req.session.destroy(() => {
+              res.clearCookie("chatapp.sid", {
+                path: "/",
+                httpOnly: true,
+                sameSite: "none",
+                secure: true
+              });
+              res.json({ message: "Signup cancelled" });
+            });
+          });
+        }
+      );
+    }
+  );
+});
+
+// ================= LOGIN =================
+// ================= LOGIN =================
 app.post('/login', loginLimiter,  (req, res) => {
   const clean = (v) => typeof v === "string" ? v.trim() : "";
   const username = clean(req.body.username);
