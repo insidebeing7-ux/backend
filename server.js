@@ -298,7 +298,8 @@ app.post('/auth/google', loginLimiter, async (req, res) => {
         message: "Logged in with Google",
         isNewUser,
         agreedTerms: !!user.agreed_terms,
-        usernameSet: !!user.username_set // NEW
+        usernameSet: !!user.username_set,
+        username: user.username // NEW — so the client can show/confirm it
       });
     });
   });
