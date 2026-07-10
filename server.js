@@ -485,13 +485,27 @@ app.get('/search-users', authLimiter, requireAuth, (req, res) => {
   const raw = req.query.q || "";
   if (raw.length > 50) return res.status(400).json({ message: "Query too long" });
 
-  // Normalize the same way a Gmail-derived username is generated at signup
-  // (base = email.split('@')[0].replace(/[^a-zA-Z0-9_]/g, '')), so typing
-  // "john.doe" or "John Doe" still matches a stored username "johndoe99".
+  const userId = req.session.user?.id;
+
+  // If the query is a full email address, match it against the email
+  // column directly (only Google-authenticated users have one).
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (emailRegex.test(raw.trim())) {
+    return db.query(
+      `SELECT id, username FROM users WHERE LOWER(email) = LOWER(?) AND id != ? LIMIT 10`,
+      [raw.trim(), userId],
+      (err, result) => {
+        if (err) { console.error("❌ SEARCH ERROR:", err); return res.status(500).json({ message: "Server error" }); }
+        res.json(result);
+      }
+    );
+  }
+
+  // Otherwise search by username prefix, same normalization as before
+  // (matches the Gmail-derived prefix e.g. "john.doe" -> "johndoe").
   const normalized = raw.replace(/[^a-zA-Z0-9_]/g, "");
   if (normalized.length === 0) return res.json([]);
 
-  const userId = req.session.user?.id;
   db.query(
     `SELECT id, username FROM users WHERE LOWER(username) LIKE LOWER(?) AND id != ? LIMIT 10`,
     [`%${normalized}%`, userId],
