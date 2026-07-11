@@ -857,7 +857,6 @@ app.get('/voice-sample-status', requireAuth, (req, res) => {
   );
 });
 
-// ================= UPLOAD VOICE SAMPLE =================
 app.post('/upload-voice-sample', requireAuth, upload.single("file"), async (req, res) => {
   const userId = req.session.user.id;
   const targetUserId = Number(req.body.target_user_id);
@@ -865,12 +864,32 @@ app.post('/upload-voice-sample', requireAuth, upload.single("file"), async (req,
   if (!Number.isInteger(targetUserId)) return res.status(400).json({ message: "Invalid target_user_id" });
   if (!req.file) return res.status(400).json({ message: "No file uploaded" });
 
+  // NEW: verify target_user_id actually exists BEFORE inserting — a bad
+  // target_user_id trips the FOREIGN KEY constraint on voice_samples and
+  // previously surfaced only as an opaque "DB error".
+  const targetExists = await new Promise((resolve, reject) => {
+    db.query("SELECT id FROM users WHERE id=?", [targetUserId], (err, result) => {
+      if (err) return reject(err);
+      resolve(result.length > 0);
+    });
+  }).catch((err) => {
+    console.error("❌ VOICE SAMPLE target lookup DB ERROR:", err.code, err.sqlMessage);
+    return null;
+  });
+
+  if (targetExists === null) {
+    return res.status(500).json({ message: "Server error checking target user" });
+  }
+  if (!targetExists) {
+    return res.status(404).json({ message: "Target user does not exist" });
+  }
+
   let cloudResult;
   try {
     cloudResult = await uploadBufferToCloudinary(req.file.buffer, req.file.mimetype);
   } catch (uploadErr) {
     console.error("❌ VOICE SAMPLE CLOUDINARY ERROR:", uploadErr);
-    return res.status(500).json({ message: "Upload failed" });
+    return res.status(500).json({ message: "Cloudinary upload failed: " + (uploadErr.message || "unknown") });
   }
 
   const fileUrl = cloudResult.secure_url;
@@ -879,7 +898,15 @@ app.post('/upload-voice-sample', requireAuth, upload.single("file"), async (req,
      ON DUPLICATE KEY UPDATE url=VALUES(url)`,
     [userId, targetUserId, fileUrl],
     (err) => {
-      if (err) { console.error("❌ VOICE SAMPLE DB ERROR:", err); return res.status(500).json({ message: "DB error" }); }
+      if (err) {
+        // NEW: log + return the REAL MySQL error code/message instead of
+        // the generic "DB error" — this is what actually lets us diagnose
+        // FK violations, duplicate key issues, connection drops, etc.
+        console.error("❌ VOICE SAMPLE DB ERROR:", err.code, err.sqlMessage || err.message);
+        return res.status(500).json({
+          message: `DB error: ${err.code || "UNKNOWN"} - ${err.sqlMessage || err.message || "no details"}`
+        });
+      }
       res.json({ ok: true, url: fileUrl });
     }
   );
