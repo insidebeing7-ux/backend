@@ -841,6 +841,51 @@ app.post('/ai-request', aiLimiter, requireAuth, async (req, res) => {
 });
 
 // ================= GET AUTO AI =================
+// ================= VOICE SAMPLE STATUS =================
+app.get('/voice-sample-status', requireAuth, (req, res) => {
+  const userId = req.session.user.id;
+  const targetUserId = Number(req.query.target_user_id);
+  if (!Number.isInteger(targetUserId)) return res.status(400).json({ message: "Invalid target_user_id" });
+
+  db.query(
+    "SELECT url FROM voice_samples WHERE user_id=? AND target_user_id=?",
+    [userId, targetUserId],
+    (err, result) => {
+      if (err) { console.error("❌ VOICE SAMPLE STATUS ERROR:", err); return res.status(500).json({ message: "Server error" }); }
+      res.json({ exists: result.length > 0, url: result.length > 0 ? result[0].url : null });
+    }
+  );
+});
+
+// ================= UPLOAD VOICE SAMPLE =================
+app.post('/upload-voice-sample', requireAuth, upload.single("file"), async (req, res) => {
+  const userId = req.session.user.id;
+  const targetUserId = Number(req.body.target_user_id);
+
+  if (!Number.isInteger(targetUserId)) return res.status(400).json({ message: "Invalid target_user_id" });
+  if (!req.file) return res.status(400).json({ message: "No file uploaded" });
+
+  let cloudResult;
+  try {
+    cloudResult = await uploadBufferToCloudinary(req.file.buffer, req.file.mimetype);
+  } catch (uploadErr) {
+    console.error("❌ VOICE SAMPLE CLOUDINARY ERROR:", uploadErr);
+    return res.status(500).json({ message: "Upload failed" });
+  }
+
+  const fileUrl = cloudResult.secure_url;
+  db.query(
+    `INSERT INTO voice_samples (user_id, target_user_id, url) VALUES (?,?,?)
+     ON DUPLICATE KEY UPDATE url=VALUES(url)`,
+    [userId, targetUserId, fileUrl],
+    (err) => {
+      if (err) { console.error("❌ VOICE SAMPLE DB ERROR:", err); return res.status(500).json({ message: "DB error" }); }
+      res.json({ ok: true, url: fileUrl });
+    }
+  );
+});
+
+// ================= GET AUTO AI =================
 app.get('/get-auto-ai', requireAuth, (req, res) => {
   if (!req.session.user) return res.json({ enabled: false });
   const user_id = req.session.user.id;
