@@ -540,7 +540,7 @@ app.post('/send', requireAuth, perUserRateLimit, (req, res) => {
   if (!content) return res.status(400).json({ message: "Missing content" });
   if (receiver_id === sender_id) return res.status(400).json({ message: "Cannot message yourself" });
 
-  db.query("SELECT id FROM users WHERE id=?", [receiver_id], (err, result) => {
+ db.query("SELECT id FROM users WHERE id=?", [receiver_id], (err, result) => {
     if (err) return res.status(500).json({ message: "Server error" });
     if (result.length === 0) return res.status(404).json({ message: "Receiver does not exist" });
     db.query(
@@ -548,6 +548,11 @@ app.post('/send', requireAuth, perUserRateLimit, (req, res) => {
       [sender_id, receiver_id, content],
       (err) => {
         if (err) { console.error("❌ SEND ERROR:", err); return res.status(500).json({ message: 'Error sending message' }); }
+        io.to(String(receiver_id)).emit("new-message", {
+          sender_id,
+          sender_username: req.session.user.username,
+          preview: content.slice(0, 80)
+        });
         res.json({ message: 'Sent' });
       }
     );
@@ -576,10 +581,70 @@ app.get('/messages', requireAuth, (req, res) => {
         content: m.deleted_for_everyone ? "This message was deleted" : m.content,
         deleted: !!m.deleted_for_everyone
       }));
+      // NEW: opening this chat means these are now read
+      db.query(
+        `UPDATE messages SET is_read=1 WHERE sender_id=? AND receiver_id=? AND is_read=0`,
+        [receiver_id, userId],
+        (readErr) => {
+          if (!readErr) io.to(String(userId)).emit("messages-read", { sender_id: receiver_id });
+        }
+      );
       res.json(mapped);
     }
   );
 });
+
+// ================= UNREAD SUMMARY (for notification bell) =================
+app.get('/unread-summary', requireAuth, (req, res) => {
+  const userId = req.session.user.id;
+  db.query(
+    `SELECT m.sender_id, u.username AS sender_username, COUNT(*) AS unread_count,
+            MAX(m.id) AS last_id
+     FROM messages m
+     JOIN users u ON u.id = m.sender_id
+     WHERE m.receiver_id=? AND m.is_read=0
+       AND m.deleted_for_everyone=0 AND m.deleted_for_receiver=0
+     GROUP BY m.sender_id, u.username
+     ORDER BY last_id DESC`,
+    [userId],
+    (err, groups) => {
+      if (err) { console.error("❌ UNREAD SUMMARY ERROR:", err); return res.status(500).json({ message: "Server error" }); }
+      if (groups.length === 0) return res.json([]);
+      const lastIds = groups.map(g => g.last_id);
+      db.query(`SELECT id, content FROM messages WHERE id IN (?)`, [lastIds], (err2, msgs) => {
+        if (err2) return res.status(500).json({ message: "Server error" });
+        const contentById = {};
+        msgs.forEach(m => contentById[m.id] = m.content);
+        const result = groups.map(g => ({
+          sender_id: g.sender_id,
+          sender_username: g.sender_username,
+          unread_count: g.unread_count,
+          last_message: contentById[g.last_id] || "",
+          last_message_id: g.last_id
+        }));
+        res.json(result);
+      });
+    }
+  );
+});
+
+// ================= MARK MESSAGES READ =================
+app.post('/mark-read', requireAuth, csrfProtection, (req, res) => {
+  const userId = req.session.user.id;
+  const senderId = Number(req.body.sender_id);
+  if (!Number.isInteger(senderId)) return res.status(400).json({ message: "Invalid sender_id" });
+  db.query(
+    `UPDATE messages SET is_read=1 WHERE receiver_id=? AND sender_id=? AND is_read=0`,
+    [userId, senderId],
+    (err) => {
+      if (err) return res.status(500).json({ message: "DB error" });
+      io.to(String(userId)).emit("messages-read", { sender_id: senderId });
+      res.json({ ok: true });
+    }
+  );
+});
+
+// ================= FILE UPLOAD =================
 
 // ================= FILE UPLOAD =================
 app.post('/upload', requireAuth, upload.single("file"), async (req, res) => {
@@ -627,6 +692,11 @@ app.post('/upload', requireAuth, upload.single("file"), async (req, res) => {
       [sender_id, receiver_id, content],
       (err) => {
         if (err) { console.error("❌ UPLOAD DB ERROR:", err); return res.status(500).json({ message: "DB error" }); }
+        io.to(String(receiver_id)).emit("new-message", {
+          sender_id,
+          sender_username: req.session.user.username,
+          preview: content.slice(0, 80)
+        });
         res.json({ ok: true, url: fileUrl, isImage, isAudio });
       }
     );
@@ -686,6 +756,11 @@ app.post('/ai-send', aiLimiter, requireAuth, perUserRateLimit, async (req, res) 
       [sender_id, receiver_id, aiReply],
       (err) => {
         if (err) { console.error("❌ AI DB ERROR:", err); return res.status(500).json({ message: 'Error saving AI message' }); }
+        io.to(String(receiver_id)).emit("new-message", {
+          sender_id,
+          sender_username: req.session.user.username,
+          preview: aiReply.slice(0, 80)
+        });
         res.json({ reply: aiReply });
       }
     );
