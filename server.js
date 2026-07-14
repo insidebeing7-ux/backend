@@ -1050,6 +1050,11 @@ app.get('/gmail/status', requireAuth, (req, res) => {
 
 // ================= GMAIL: START AUTH =================
 app.get('/auth/gmail/start', requireAuth, (req, res) => {
+  console.log("🔎 GMAIL START AUTH - live values:", {
+    GMAIL_CLIENT_ID,
+    GMAIL_CLIENT_SECRET: GMAIL_CLIENT_SECRET ? "present" : "MISSING",
+    GMAIL_REDIRECT_URI
+  });
   const oauth2Client = newGmailOAuthClient();
   const authUrl = oauth2Client.generateAuthUrl({
     access_type: 'offline',
@@ -1057,6 +1062,7 @@ app.get('/auth/gmail/start', requireAuth, (req, res) => {
     scope: GMAIL_SCOPES,
     state: String(req.session.user.id)
   });
+  console.log("🔎 Generated authUrl:", authUrl);
   res.json({ url: authUrl });
 });
 
