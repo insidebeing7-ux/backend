@@ -1046,48 +1046,106 @@ app.get('/gmail/status', requireAuth, (req, res) => {
   });
 });
 
-// ================= GMAIL: START AUTH =================
 app.get('/auth/gmail/start', requireAuth, (req, res) => {
-  console.log("🔎 GMAIL START AUTH - live values:", {
-    GMAIL_CLIENT_ID,
-    GMAIL_CLIENT_SECRET: GMAIL_CLIENT_SECRET ? "present" : "MISSING",
-    GMAIL_REDIRECT_URI
-  });
   const oauth2Client = newGmailOAuthClient();
   const authUrl = oauth2Client.generateAuthUrl({
     access_type: 'offline',
-    prompt: 'consent',
-    scope: GMAIL_SCOPES,
+    // 'consent' forces re-approval every single time, even for users who
+    // already granted access — only use it the first time we need a
+    // refresh_token. Google returns a refresh_token WITHOUT prompt=consent
+    // as long as this is the first authorization for this client+user pair,
+    // so 'select_account' is enough for a smoother repeat experience.
+    prompt: 'select_account',
+    scope: GMAIL_SCOPES, // both scopes requested together = ONE combined consent screen, not two
+    include_granted_scopes: true,
     state: String(req.session.user.id)
   });
-  console.log("🔎 Generated authUrl:", authUrl);
   res.json({ url: authUrl });
 });
 
-// ================= GMAIL: OAUTH CALLBACK =================
+// NEW — small helper: build an HTML page that immediately redirects into
+// the app via custom scheme (myapp://gmail-connected) and, as a fallback
+// for browsers that block the redirect, shows a manual "Return to app"
+// link plus auto-closes the tab if it was opened as a popup/CustomTab.
+function gmailResultPage({ success, message }) {
+  const deepLink = success
+    ? "chatflowapp://gmail-callback?status=success"
+    : `chatflowapp://gmail-callback?status=error&message=${encodeURIComponent(message || "")}`;
+  return `
+    <html>
+      <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <script>
+          window.location.href = "${deepLink}";
+          setTimeout(function() {
+            // If the deep link didn't fire (app not installed / desktop
+            // browser testing), give the user a manual way back.
+            document.getElementById("fallback").style.display = "block";
+          }, 800);
+        </script>
+        <style>
+          body { font-family: sans-serif; text-align: center; padding: 40px 20px; }
+          #fallback { display: none; }
+          a.btn { display:inline-block; margin-top:16px; padding:12px 24px;
+                  background:#1877F2; color:#fff; border-radius:8px; text-decoration:none; }
+        </style>
+      </head>
+      <body>
+        <h3>${success ? "Gmail connected ✅" : "Connection failed"}</h3>
+        <p>${success ? "Returning you to the app..." : (message || "Something went wrong.")}</p>
+        <div id="fallback">
+          <p>If nothing happened, tap below:</p>
+          <a class="btn" href="${deepLink}">Return to app</a>
+        </div>
+      </body>
+    </html>
+  `;
+}
+
 app.get('/auth/gmail/callback', async (req, res) => {
   const code = req.query.code;
   const userId = Number(req.query.state);
   if (!code || !Number.isInteger(userId)) {
-    return res.status(400).send("Invalid callback parameters");
+    return res.status(400).send(gmailResultPage({ success: false, message: "Invalid callback parameters" }));
   }
   try {
     const oauth2Client = newGmailOAuthClient();
     const { tokens } = await oauth2Client.getToken(code);
+
+    // CHANGED — if no refresh_token came back (common on reconnect, since
+    // Google only issues one on first-ever consent), fall back to keeping
+    // whichever refresh_token we already have on file instead of failing.
     if (!tokens.refresh_token) {
-      return res.status(400).send("<html><body><h3>No refresh token returned. Remove app access in your Google Account (myaccount.google.com/permissions) and try connecting again.</h3></body></html>");
+      db.query("SELECT gmail_refresh_token FROM users WHERE id=?", [userId], (err, result) => {
+        const hasExisting = !err && result.length > 0 && result[0].gmail_refresh_token;
+        if (hasExisting) {
+          db.query("UPDATE users SET gmail_connected=1 WHERE id=?", [userId], () => {
+            res.send(gmailResultPage({ success: true }));
+          });
+        } else {
+          res.status(400).send(gmailResultPage({
+            success: false,
+            message: "No refresh token returned. Remove app access in your Google Account (myaccount.google.com/permissions) and try connecting again."
+          }));
+        }
+      });
+      return;
     }
+
     db.query(
       "UPDATE users SET gmail_refresh_token=?, gmail_connected=1 WHERE id=?",
       [tokens.refresh_token, userId],
       (err) => {
-        if (err) { console.error("❌ GMAIL TOKEN SAVE ERROR:", err); return res.status(500).send("Server error"); }
-        res.send("<html><body><h3>Gmail connected. You can close this window and return to the app.</h3></body></html>");
+        if (err) {
+          console.error("❌ GMAIL TOKEN SAVE ERROR:", err);
+          return res.status(500).send(gmailResultPage({ success: false, message: "Server error" }));
+        }
+        res.send(gmailResultPage({ success: true }));
       }
     );
   } catch (err) {
     console.error("❌ GMAIL CALLBACK ERROR:", err.message);
-    res.status(500).send("Gmail authorization failed");
+    res.status(500).send(gmailResultPage({ success: false, message: "Gmail authorization failed" }));
   }
 });
 
