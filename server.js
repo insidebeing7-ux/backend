@@ -144,20 +144,18 @@ app.use(helmet({
       defaultSrc: ["'self'"],
       scriptSrc: ["'self'"],
       connectSrc: [
-        "'self'",
-        process.env.CLIENT_URL,
-        "https://backend-vz58.onrender.com",
-        "wss://chatflow-ai-o3e6.onrender.com",
-        "https://backend-vz58.onrender.com",
-        "wss://backend-vz58.onrender.com",
-        "turn:global.relay.metered.ca",
-
-        "stun:stun.l.google.com",
-        "stun:stun1.l.google.com",
-        "stun:",
-        "turn:",
-        "turns:"
-      ],
+  "'self'",
+  process.env.CLIENT_URL,
+  "https://backend-1-liqz.onrender.com",
+  "wss://chatflow-ai-o3e6.onrender.com",
+  "wss://backend-1-liqz.onrender.com",
+  "turn:global.relay.metered.ca",
+  "stun:stun.l.google.com",
+  "stun:stun1.l.google.com",
+  "stun:",
+  "turn:",
+  "turns:"
+],
     }
   }
 }));
