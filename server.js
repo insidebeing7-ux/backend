@@ -35,6 +35,12 @@ const GMAIL_SCOPES = [
   "https://www.googleapis.com/auth/gmail.send"
 ];
 
+console.log("🔑 GMAIL ENV CHECK:", {
+  GMAIL_CLIENT_ID: GMAIL_CLIENT_ID ? GMAIL_CLIENT_ID.slice(0, 15) + "..." : "MISSING",
+  GMAIL_CLIENT_SECRET: GMAIL_CLIENT_SECRET ? "present" : "MISSING",
+  GMAIL_REDIRECT_URI: GMAIL_REDIRECT_URI || "MISSING"
+});
+
 function newGmailOAuthClient() {
   return new google.auth.OAuth2(GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REDIRECT_URI);
 }
