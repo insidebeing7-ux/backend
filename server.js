@@ -25,6 +25,38 @@ const { OAuth2Client } = require('google-auth-library');
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "688424361924-drqcfv2qovlnf8i5htakiihe9i4peuv2.apps.googleusercontent.com";
 const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID);
 
+// NEW — separate credentials for Gmail inbox access (distinct from login)
+const { google } = require('googleapis');
+const GMAIL_CLIENT_ID = process.env.GMAIL_CLIENT_ID;
+const GMAIL_CLIENT_SECRET = process.env.GMAIL_CLIENT_SECRET;
+const GMAIL_REDIRECT_URI = process.env.GMAIL_REDIRECT_URI;
+const GMAIL_SCOPES = [
+  "https://www.googleapis.com/auth/gmail.readonly",
+  "https://www.googleapis.com/auth/gmail.send"
+];
+
+function newGmailOAuthClient() {
+  return new google.auth.OAuth2(GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REDIRECT_URI);
+}
+
+// NEW — builds an authenticated Gmail API client for a given user, using their stored refresh token
+async function getGmailClientForUser(userId) {
+  const row = await new Promise((resolve, reject) => {
+    db.query("SELECT gmail_refresh_token FROM users WHERE id=?", [userId], (err, result) => {
+      if (err) return reject(err);
+      resolve(result[0]);
+    });
+  });
+  if (!row || !row.gmail_refresh_token) {
+    const err = new Error("GMAIL_NOT_CONNECTED");
+    err.code = "GMAIL_NOT_CONNECTED";
+    throw err;
+  }
+  const oauth2Client = newGmailOAuthClient();
+  oauth2Client.setCredentials({ refresh_token: row.gmail_refresh_token });
+  return google.gmail({ version: "v1", auth: oauth2Client });
+}
+
 const BLOCKED_EXTENSIONS = [".exe", ".bat", ".cmd", ".sh", ".php", ".py", ".rb", ".pl", ".cgi", ".msi", ".dll", ".vbs", ".ps1"];
 const AUDIO_EXTENSIONS = [".webm", ".ogg", ".mp3", ".mp4", ".m4a", ".wav", ".opus", ".aac"];
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MB
@@ -1000,6 +1032,128 @@ app.get('/get-auto-ai', requireAuth, (req, res) => {
       res.json({ enabled: !!result[0].enabled });
     }
   );
+});
+
+// ================= GMAIL: CONNECTION STATUS =================
+app.get('/gmail/status', requireAuth, (req, res) => {
+  db.query("SELECT gmail_connected FROM users WHERE id=?", [req.session.user.id], (err, result) => {
+    if (err || result.length === 0) return res.status(500).json({ message: "Server error" });
+    res.json({ connected: !!result[0].gmail_connected });
+  });
+});
+
+// ================= GMAIL: START AUTH =================
+app.get('/auth/gmail/start', requireAuth, (req, res) => {
+  const oauth2Client = newGmailOAuthClient();
+  const authUrl = oauth2Client.generateAuthUrl({
+    access_type: 'offline',
+    prompt: 'consent',
+    scope: GMAIL_SCOPES,
+    state: String(req.session.user.id)
+  });
+  res.json({ url: authUrl });
+});
+
+// ================= GMAIL: OAUTH CALLBACK =================
+app.get('/auth/gmail/callback', async (req, res) => {
+  const code = req.query.code;
+  const userId = Number(req.query.state);
+  if (!code || !Number.isInteger(userId)) {
+    return res.status(400).send("Invalid callback parameters");
+  }
+  try {
+    const oauth2Client = newGmailOAuthClient();
+    const { tokens } = await oauth2Client.getToken(code);
+    if (!tokens.refresh_token) {
+      return res.status(400).send("<html><body><h3>No refresh token returned. Remove app access in your Google Account (myaccount.google.com/permissions) and try connecting again.</h3></body></html>");
+    }
+    db.query(
+      "UPDATE users SET gmail_refresh_token=?, gmail_connected=1 WHERE id=?",
+      [tokens.refresh_token, userId],
+      (err) => {
+        if (err) { console.error("❌ GMAIL TOKEN SAVE ERROR:", err); return res.status(500).send("Server error"); }
+        res.send("<html><body><h3>Gmail connected. You can close this window and return to the app.</h3></body></html>");
+      }
+    );
+  } catch (err) {
+    console.error("❌ GMAIL CALLBACK ERROR:", err.message);
+    res.status(500).send("Gmail authorization failed");
+  }
+});
+
+// ================= GMAIL: INBOX LIST =================
+app.get('/gmail/inbox', requireAuth, async (req, res) => {
+  try {
+    const gmail = await getGmailClientForUser(req.session.user.id);
+    const list = await gmail.users.messages.list({
+      userId: "me",
+      maxResults: 20,
+      labelIds: ["INBOX"]
+    });
+    const messages = list.data.messages || [];
+
+    const detailed = await Promise.all(messages.map(async (m) => {
+      const full = await gmail.users.messages.get({
+        userId: "me",
+        id: m.id,
+        format: "metadata",
+        metadataHeaders: ["From", "Subject", "Date"]
+      });
+      const headers = full.data.payload.headers || [];
+      const get = (name) => headers.find(h => h.name === name)?.value || "";
+      return {
+        id: m.id,
+        from: get("From"),
+        subject: get("Subject"),
+        date: get("Date"),
+        snippet: full.data.snippet || "",
+        unread: (full.data.labelIds || []).includes("UNREAD")
+      };
+    }));
+
+    res.json(detailed);
+  } catch (err) {
+    if (err.code === "GMAIL_NOT_CONNECTED") {
+      return res.status(409).json({ message: "Gmail not connected", connected: false });
+    }
+    console.error("❌ GMAIL INBOX ERROR:", err.message);
+    res.status(500).json({ message: "Could not fetch inbox" });
+  }
+});
+
+// ================= GMAIL: SEND MAIL =================
+app.post('/gmail/send', requireAuth, async (req, res) => {
+  const { to, subject, body } = req.body;
+  if (typeof to !== "string" || typeof subject !== "string" || typeof body !== "string") {
+    return res.status(400).json({ message: "Missing to/subject/body" });
+  }
+  try {
+    const gmail = await getGmailClientForUser(req.session.user.id);
+    const messageParts = [
+      `To: ${to}`,
+      `Subject: ${subject}`,
+      "Content-Type: text/plain; charset=utf-8",
+      "",
+      body
+    ];
+    const raw = Buffer.from(messageParts.join("\n"))
+      .toString("base64")
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/, "");
+
+    await gmail.users.messages.send({
+      userId: "me",
+      requestBody: { raw }
+    });
+    res.json({ message: "Sent" });
+  } catch (err) {
+    if (err.code === "GMAIL_NOT_CONNECTED") {
+      return res.status(409).json({ message: "Gmail not connected", connected: false });
+    }
+    console.error("❌ GMAIL SEND ERROR:", err.message);
+    res.status(500).json({ message: "Could not send email" });
+  }
 });
 
 // ================= HTTP + SOCKET =================
