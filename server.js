@@ -1190,6 +1190,58 @@ app.get('/gmail/inbox', requireAuth, async (req, res) => {
 });
 
 // ================= GMAIL: SEND MAIL =================
+// ================= GMAIL: MESSAGE DETAIL =================
+app.get('/gmail/message/:id', requireAuth, async (req, res) => {
+  try {
+    const gmail = await getGmailClientForUser(req.session.user.id);
+    const full = await gmail.users.messages.get({
+      userId: "me",
+      id: req.params.id,
+      format: "full"
+    });
+
+    const headers = full.data.payload.headers || [];
+    const get = (name) => headers.find(h => h.name === name)?.value || "";
+
+    // Walk MIME parts to find text/plain (fallback: text/html stripped)
+    function extractBody(payload) {
+      if (!payload) return "";
+      if (payload.body?.data && payload.mimeType === "text/plain") {
+        return Buffer.from(payload.body.data, "base64").toString("utf-8");
+      }
+      if (payload.parts) {
+        const plain = payload.parts.find(p => p.mimeType === "text/plain");
+        if (plain?.body?.data) return Buffer.from(plain.body.data, "base64").toString("utf-8");
+        for (const part of payload.parts) {
+          const nested = extractBody(part);
+          if (nested) return nested;
+        }
+      }
+      if (payload.body?.data) {
+        return Buffer.from(payload.body.data, "base64").toString("utf-8");
+      }
+      return "";
+    }
+
+    res.json({
+      id: req.params.id,
+      from: get("From"),
+      to: get("To"),
+      subject: get("Subject"),
+      date: get("Date"),
+      bodyText: extractBody(full.data.payload).slice(0, 20000),
+      bodyHtml: null
+    });
+  } catch (err) {
+    if (err.code === "GMAIL_NOT_CONNECTED") {
+      return res.status(409).json({ message: "Gmail not connected", connected: false });
+    }
+    console.error("❌ GMAIL MESSAGE DETAIL ERROR:", err.message);
+    res.status(500).json({ message: "Could not fetch message" });
+  }
+});
+
+// ================= GMAIL: SEND MAIL =================
 app.post('/gmail/send', requireAuth, async (req, res) => {
   const { to, subject, body } = req.body;
   if (typeof to !== "string" || typeof subject !== "string" || typeof body !== "string") {
