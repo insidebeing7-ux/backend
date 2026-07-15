@@ -1153,16 +1153,15 @@ app.get('/auth/gmail/callback', async (req, res) => {
 app.get('/gmail/inbox', requireAuth, async (req, res) => {
   try {
     const gmail = await getGmailClientForUser(req.session.user.id);
-    // NEW — allow the client to ask for more messages (used by pull-to-refresh
-    // and "load more"); default raised from 20 to 50, capped at 100 so a
-    // single request can't hammer the Gmail API.
     const requestedMax = Number(req.query.max_results) || 50;
     const maxResults = Math.min(Math.max(requestedMax, 1), 100);
+    const pageToken = typeof req.query.page_token === "string" ? req.query.page_token : undefined; // ★ NEW
 
     const list = await gmail.users.messages.list({
       userId: "me",
       maxResults,
-      labelIds: ["INBOX"]
+      labelIds: ["INBOX"],
+      pageToken   // ★ NEW — lets the client ask for the next page of older mail
     });
     const messages = list.data.messages || [];
 
@@ -1181,9 +1180,13 @@ app.get('/gmail/inbox', requireAuth, async (req, res) => {
         subject: get("Subject"),
         date: get("Date"),
         snippet: full.data.snippet || "",
-        unread: (full.data.labelIds || []).includes("UNREAD")
+        unread: (full.data.labelIds || []).includes("UNREAD"),
+        internalDate: Number(full.data.internalDate) || 0   // ★ NEW — real timestamp from Gmail, ms since epoch
       };
     }));
+
+    // ★ NEW — guarantee newest-first regardless of what order the API returned
+    detailed.sort((a, b) => b.internalDate - a.internalDate);
 
     res.json(detailed);
   } catch (err) {
