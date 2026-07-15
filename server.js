@@ -1153,9 +1153,15 @@ app.get('/auth/gmail/callback', async (req, res) => {
 app.get('/gmail/inbox', requireAuth, async (req, res) => {
   try {
     const gmail = await getGmailClientForUser(req.session.user.id);
+    // NEW — allow the client to ask for more messages (used by pull-to-refresh
+    // and "load more"); default raised from 20 to 50, capped at 100 so a
+    // single request can't hammer the Gmail API.
+    const requestedMax = Number(req.query.max_results) || 50;
+    const maxResults = Math.min(Math.max(requestedMax, 1), 100);
+
     const list = await gmail.users.messages.list({
       userId: "me",
-      maxResults: 20,
+      maxResults,
       labelIds: ["INBOX"]
     });
     const messages = list.data.messages || [];
