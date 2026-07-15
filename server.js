@@ -1200,6 +1200,59 @@ app.get('/gmail/inbox', requireAuth, async (req, res) => {
 
 // ================= GMAIL: SEND MAIL =================
 // ================= GMAIL: MESSAGE DETAIL =================
+// ================= GMAIL: SEARCH =================
+app.get('/gmail/search', requireAuth, async (req, res) => {
+  try {
+    const gmail = await getGmailClientForUser(req.session.user.id);
+    const q = typeof req.query.q === "string" ? req.query.q.trim().slice(0, 200) : "";
+    if (!q) return res.status(400).json({ message: "Missing query" });
+
+    const requestedMax = Number(req.query.max_results) || 50;
+    const maxResults = Math.min(Math.max(requestedMax, 1), 100);
+    const pageToken = typeof req.query.page_token === "string" ? req.query.page_token : undefined;
+
+    const list = await gmail.users.messages.list({
+      userId: "me",
+      maxResults,
+      q,
+      pageToken
+    });
+    const messages = list.data.messages || [];
+
+    const detailed = await Promise.all(messages.map(async (m) => {
+      const full = await gmail.users.messages.get({
+        userId: "me",
+        id: m.id,
+        format: "metadata",
+        metadataHeaders: ["From", "Subject", "Date"]
+      });
+      const headers = full.data.payload.headers || [];
+      const get = (name) => headers.find(h => h.name === name)?.value || "";
+      return {
+        id: m.id,
+        from: get("From"),
+        subject: get("Subject"),
+        date: get("Date"),
+        snippet: full.data.snippet || "",
+        unread: (full.data.labelIds || []).includes("UNREAD"),
+        internalDate: Number(full.data.internalDate) || 0
+      };
+    }));
+
+    detailed.sort((a, b) => b.internalDate - a.internalDate);
+
+    res.json({ results: detailed, nextPageToken: list.data.nextPageToken || null });
+  } catch (err) {
+    if (err.code === "GMAIL_NOT_CONNECTED") {
+      return res.status(409).json({ message: "Gmail not connected", connected: false });
+    }
+    console.error("❌ GMAIL SEARCH ERROR:", err.message);
+    res.status(500).json({ message: "Search failed" });
+  }
+});
+
+// ================= GMAIL: SEND MAIL =================
+// ================= GMAIL: MESSAGE DETAIL =================
 app.get('/gmail/message/:id', requireAuth, async (req, res) => {
   try {
     const gmail = await getGmailClientForUser(req.session.user.id);
