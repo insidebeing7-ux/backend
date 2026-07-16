@@ -1388,37 +1388,82 @@ app.get('/gmail/message/:id', requireAuth, async (req, res) => {
 });
 
 // ================= GMAIL: SEND MAIL =================
+// ================= GMAIL: SEND MAIL =================
 app.post('/gmail/send', requireAuth, async (req, res) => {
   const { to, subject, body } = req.body;
   if (typeof to !== "string" || typeof subject !== "string" || typeof body !== "string") {
     return res.status(400).json({ message: "Missing to/subject/body" });
   }
+
+  // NEW — reject bad recipient addresses before wasting a Gmail API call.
+  // A malformed "to" can still get accepted by the API and just bounce
+  // silently, which is exactly what "sent but never arrives" looks like.
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(to.trim())) {
+    return res.status(400).json({ message: "Invalid recipient email address" });
+  }
+
   try {
     const gmail = await getGmailClientForUser(req.session.user.id);
+
+    // NEW — RFC 2047 encode the subject if it has non-ASCII characters
+    // (emoji, accents). An unencoded non-ASCII subject can corrupt the
+    // raw header block and break delivery entirely.
+    const encodedSubject = /^[\x00-\x7F]*$/.test(subject)
+      ? subject
+      : `=?UTF-8?B?${Buffer.from(subject, "utf-8").toString("base64")}?=`;
+
     const messageParts = [
       `To: ${to}`,
-      `Subject: ${subject}`,
+      `Subject: ${encodedSubject}`,          // CHANGED — was raw subject
+      "MIME-Version: 1.0",                    // NEW — missing before; some
+                                               // servers/spam filters silently
+                                               // drop messages without it
       "Content-Type: text/plain; charset=utf-8",
+      "Content-Transfer-Encoding: 7bit",      // NEW
       "",
       body
     ];
-    const raw = Buffer.from(messageParts.join("\n"))
+    const raw = Buffer.from(messageParts.join("\r\n"))  // CHANGED — was "\n",
+                                                          // RFC 5322 requires CRLF
       .toString("base64")
       .replace(/\+/g, "-")
       .replace(/\//g, "_")
       .replace(/=+$/, "");
 
-    await gmail.users.messages.send({
+    const sendResult = await gmail.users.messages.send({   // CHANGED — capture result
       userId: "me",
       requestBody: { raw }
     });
-    res.json({ message: "Sent" });
+
+    // NEW — log the actual Gmail message/thread id so you can confirm
+    // in the logs that a real send happened, not just that the request
+    // didn't throw.
+    console.log("✅ GMAIL SEND OK:", {
+      to,
+      messageId: sendResult.data.id,
+      threadId: sendResult.data.threadId
+    });
+
+    res.json({ message: "Sent", messageId: sendResult.data.id }); // CHANGED — include id
   } catch (err) {
     if (err.code === "GMAIL_NOT_CONNECTED") {
       return res.status(409).json({ message: "Gmail not connected", connected: false });
     }
-    console.error("❌ GMAIL SEND ERROR:", err.message);
-    res.status(500).json({ message: "Could not send email" });
+    // CHANGED — was just err.message. This now logs the REAL Gmail API
+    // error body (err.response.data), which is where things like
+    // "insufficient permission" / invalid scope / quota errors actually
+    // show up. Without this you can't tell WHY a send silently failed.
+    console.error("❌ GMAIL SEND ERROR:", {
+      message: err.message,
+      status: err.response?.status,
+      data: err.response?.data,
+      to
+    });
+    res.status(500).json({
+      message: "Could not send email",
+      detail: err.response?.data?.error?.message || err.message   // CHANGED
+    });
   }
 });
 
