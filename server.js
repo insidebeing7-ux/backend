@@ -30,6 +30,15 @@ const { google } = require('googleapis');
 const GMAIL_CLIENT_ID = process.env.GMAIL_CLIENT_ID;
 const GMAIL_CLIENT_SECRET = process.env.GMAIL_CLIENT_SECRET;
 const GMAIL_REDIRECT_URI = process.env.GMAIL_REDIRECT_URI;
+
+// NEW — normalize AI_URL once at startup so "/health" and "/ai" never get a
+// double slash or point at "undefined/health" if the env var is missing.
+if (!process.env.AI_URL) {
+  console.error("❌ FATAL: AI_URL environment variable is missing.");
+} else {
+  process.env.AI_URL = process.env.AI_URL.replace(/\/+$/, ""); // strip trailing slash(es)
+}
+console.log("🤖 AI_URL configured as:", process.env.AI_URL || "MISSING");
 const GMAIL_SCOPES = [
   "https://www.googleapis.com/auth/gmail.readonly",
   "https://www.googleapis.com/auth/gmail.send"
@@ -1410,10 +1419,19 @@ let activeCalls = new Map();
 
 async function keepAIAlive() {
   try {
-    await axios.get(process.env.AI_URL + "/health", { timeout: 30000 });
-    console.log("✅ AI server pinged");
+    const url = process.env.AI_URL + "/health";
+    console.log("🌐 Pinging AI health check at:", url);   // NEW — confirms exactly what URL is being hit
+    const res = await axios.get(url, { timeout: 30000 });
+    console.log("✅ AI server pinged, status:", res.status);
   } catch (err) {
-    console.warn("⚠️ AI ping failed:", err.message);
+    // NEW — log the ACTUAL status + response body so we can see why it's a bad request
+    console.warn(
+      "⚠️ AI ping failed:",
+      err.code,
+      err.response?.status,
+      err.response?.data,
+      "URL used:", process.env.AI_URL + "/health"
+    );
   }
 }
 setInterval(keepAIAlive, 13 * 60 * 1000);
