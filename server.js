@@ -1287,25 +1287,61 @@ app.get('/gmail/message/:id', requireAuth, async (req, res) => {
     const headers = full.data.payload.headers || [];
     const get = (name) => headers.find(h => h.name === name)?.value || "";
 
-    // Walk MIME parts to find text/plain (fallback: text/html stripped)
-    function extractBody(payload) {
-      if (!payload) return "";
-      if (payload.body?.data && payload.mimeType === "text/plain") {
-        return Buffer.from(payload.body.data, "base64").toString("utf-8");
+    // NEW — walks MIME parts and returns BOTH text/plain and text/html
+    // separately, recursing into multipart/alternative and multipart/related
+    // containers. Previously this only looked for text/plain and, when an
+    // email had none (common for HTML-only marketing/onboarding emails),
+    // it fell through to returning the raw part body regardless of type —
+    // which dumped raw HTML/CSS source (e.g. "72px !important { ... }")
+    // straight into bodyText.
+    function extractParts(payload, found = { plain: null, html: null }) {
+      if (!payload) return found;
+
+      if (payload.mimeType === "text/plain" && payload.body?.data && !found.plain) {
+        found.plain = Buffer.from(payload.body.data, "base64").toString("utf-8");
       }
+      if (payload.mimeType === "text/html" && payload.body?.data && !found.html) {
+        found.html = Buffer.from(payload.body.data, "base64").toString("utf-8");
+      }
+
       if (payload.parts) {
-        const plain = payload.parts.find(p => p.mimeType === "text/plain");
-        if (plain?.body?.data) return Buffer.from(plain.body.data, "base64").toString("utf-8");
         for (const part of payload.parts) {
-          const nested = extractBody(part);
-          if (nested) return nested;
+          extractParts(part, found);
+          if (found.plain && found.html) break;
         }
       }
-      if (payload.body?.data) {
-        return Buffer.from(payload.body.data, "base64").toString("utf-8");
-      }
-      return "";
+      return found;
     }
+
+    // NEW — strips tags/scripts/styles from HTML to build a safe plain-text
+    // fallback when the email has no text/plain part at all. This is what
+    // was missing: previously the "fallback" path returned raw HTML/CSS
+    // source, not a stripped, readable version of it.
+    function htmlToPlainText(html) {
+      if (!html) return "";
+      return html
+        .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+        .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+        .replace(/<!--[\s\S]*?-->/g, "")
+        .replace(/<br\s*\/?>/gi, "\n")
+        .replace(/<\/p>/gi, "\n\n")
+        .replace(/<\/(div|tr|li|h[1-6])>/gi, "\n")
+        .replace(/<[^>]+>/g, "")
+        .replace(/&nbsp;/g, " ")
+        .replace(/&amp;/g, "&")
+        .replace(/&lt;/g, "<")
+        .replace(/&gt;/g, ">")
+        .replace(/&#39;/g, "'")
+        .replace(/&quot;/g, '"')
+        .replace(/[ \t]+\n/g, "\n")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
+    }
+
+    const { plain, html } = extractParts(full.data.payload);
+    const safeBodyText = (plain && plain.trim().length > 0)
+      ? plain
+      : htmlToPlainText(html);
 
     res.json({
       id: req.params.id,
@@ -1313,8 +1349,8 @@ app.get('/gmail/message/:id', requireAuth, async (req, res) => {
       to: get("To"),
       subject: get("Subject"),
       date: get("Date"),
-      bodyText: extractBody(full.data.payload).slice(0, 20000),
-      bodyHtml: null
+      bodyText: safeBodyText.slice(0, 20000),
+      bodyHtml: html ? html.slice(0, 100000) : null   // CHANGED — actually send the HTML now
     });
   } catch (err) {
     if (err.code === "GMAIL_NOT_CONNECTED") {
