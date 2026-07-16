@@ -690,7 +690,24 @@ app.post('/mark-read', requireAuth, csrfProtection, (req, res) => {
 });
 
 // ================= FILE UPLOAD =================
-
+// ================= GENERIC UPLOAD (Gmail reply attachments / voice) =================
+app.post('/upload-generic', requireAuth, upload.single("file"), async (req, res) => {
+  if (!req.file) return res.status(400).json({ message: "No file uploaded" });
+  try {
+    const cloudResult = await uploadBufferToCloudinary(req.file.buffer, req.file.mimetype);
+    const fileUrl = cloudResult.secure_url;
+    const originalName = req.file.originalname.replace(/[<>&"]/g, "");
+    const ext = path.extname(req.file.originalname).toLowerCase();
+    const imageExts = [".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg"];
+    const audioExts = [".webm", ".ogg", ".mp3", ".mp4", ".m4a", ".wav", ".opus", ".aac", ".3gp", ".3gpp"];
+    const isImage = imageExts.includes(ext);
+    const isAudio = audioExts.includes(ext);
+    res.json({ ok: true, url: fileUrl, isImage, isAudio, name: originalName });
+  } catch (err) {
+    console.error("❌ GENERIC UPLOAD ERROR:", err);
+    res.status(500).json({ message: "Upload failed" });
+  }
+});
 // ================= FILE UPLOAD =================
 app.post('/upload', requireAuth, upload.single("file"), async (req, res) => {
   const sender_id = req.session.user.id;
