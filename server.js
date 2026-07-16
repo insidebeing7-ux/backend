@@ -1040,9 +1040,12 @@ app.get('/get-auto-ai', requireAuth, (req, res) => {
 
 // ================= GMAIL: CONNECTION STATUS =================
 app.get('/gmail/status', requireAuth, (req, res) => {
-  db.query("SELECT gmail_connected FROM users WHERE id=?", [req.session.user.id], (err, result) => {
+  db.query("SELECT gmail_connected, gmail_email FROM users WHERE id=?", [req.session.user.id], (err, result) => {
     if (err || result.length === 0) return res.status(500).json({ message: "Server error" });
-    res.json({ connected: !!result[0].gmail_connected });
+    res.json({
+      connected: !!result[0].gmail_connected,
+      email: result[0].gmail_email || null   // NEW
+    });
   });
 });
 
@@ -1112,16 +1115,32 @@ app.get('/auth/gmail/callback', async (req, res) => {
     const oauth2Client = newGmailOAuthClient();
     const { tokens } = await oauth2Client.getToken(code);
 
-    // CHANGED — if no refresh_token came back (common on reconnect, since
-    // Google only issues one on first-ever consent), fall back to keeping
-    // whichever refresh_token we already have on file instead of failing.
+    // NEW — always fetch the email of the account that was just authorized,
+    // regardless of which branch below runs. This is what lets us catch a
+    // reconnect that picked a different Google account than expected.
+    let connectedEmail = null;
+    try {
+      oauth2Client.setCredentials(tokens);
+      const gmailProbe = google.gmail({ version: "v1", auth: oauth2Client });
+      const profile = await gmailProbe.users.getProfile({ userId: "me" });
+      connectedEmail = profile.data.emailAddress || null;
+      console.log(`🔑 GMAIL CALLBACK: userId=${userId} connectedEmail=${connectedEmail}`);
+    } catch (profileErr) {
+      console.warn("⚠️ Could not fetch Gmail profile email:", profileErr.message);
+    }
+
     if (!tokens.refresh_token) {
       db.query("SELECT gmail_refresh_token FROM users WHERE id=?", [userId], (err, result) => {
         const hasExisting = !err && result.length > 0 && result[0].gmail_refresh_token;
         if (hasExisting) {
-          db.query("UPDATE users SET gmail_connected=1 WHERE id=?", [userId], () => {
-            res.send(gmailResultPage({ success: true }));
-          });
+          // NEW — still update gmail_email even when reusing the existing
+          // refresh_token, so the UI reflects whichever account was just
+          // picked in the Google account chooser.
+          db.query(
+            "UPDATE users SET gmail_connected=1, gmail_email=? WHERE id=?",
+            [connectedEmail, userId],
+            () => { res.send(gmailResultPage({ success: true })); }
+          );
         } else {
           res.status(400).send(gmailResultPage({
             success: false,
@@ -1133,8 +1152,8 @@ app.get('/auth/gmail/callback', async (req, res) => {
     }
 
     db.query(
-      "UPDATE users SET gmail_refresh_token=?, gmail_connected=1 WHERE id=?",
-      [tokens.refresh_token, userId],
+      "UPDATE users SET gmail_refresh_token=?, gmail_connected=1, gmail_email=? WHERE id=?",
+      [tokens.refresh_token, connectedEmail, userId],   // CHANGED — added connectedEmail
       (err) => {
         if (err) {
           console.error("❌ GMAIL TOKEN SAVE ERROR:", err);
@@ -1149,20 +1168,22 @@ app.get('/auth/gmail/callback', async (req, res) => {
   }
 });
 
-// ================= GMAIL: INBOX LIST =================
 app.get('/gmail/inbox', requireAuth, async (req, res) => {
   try {
     const gmail = await getGmailClientForUser(req.session.user.id);
     const requestedMax = Number(req.query.max_results) || 50;
     const maxResults = Math.min(Math.max(requestedMax, 1), 100);
-    const pageToken = typeof req.query.page_token === "string" ? req.query.page_token : undefined; // ★ NEW
+    const pageToken = typeof req.query.page_token === "string" ? req.query.page_token : undefined;
 
     const list = await gmail.users.messages.list({
-  userId: "me",
-  maxResults,
-  q: "in:inbox",   // catches Promotions/Updates/Social tabs too, same reach as gmail/search
-  pageToken
-});
+      userId: "me",
+      maxResults,
+      q: "in:inbox",   // CHANGED — was labelIds:["INBOX"]; that misses mail Gmail
+                        // has auto-sorted into Promotions/Updates/Social, which is
+                        // exactly why /gmail/search (uses q=) found messages that
+                        // /gmail/inbox couldn't.
+      pageToken
+    });
 console.log(`📬 Gmail inbox list for user ${req.session.user.id}: ${list.data.resultSizeEstimate} results`);
     const messages = list.data.messages || [];
 
