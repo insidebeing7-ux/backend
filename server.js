@@ -1158,11 +1158,13 @@ app.get('/gmail/inbox', requireAuth, async (req, res) => {
     const pageToken = typeof req.query.page_token === "string" ? req.query.page_token : undefined; // ★ NEW
 
     const list = await gmail.users.messages.list({
-      userId: "me",
-      maxResults,
-      labelIds: ["INBOX"],
-      pageToken   // ★ NEW — lets the client ask for the next page of older mail
-    });
+  userId: "me",
+  maxResults,
+  labelIds: ["INBOX"],
+  q: "in:inbox", // ensures category tabs (promotions/updates/social) aren't silently excluded
+  pageToken
+});
+console.log(`📬 Gmail inbox list for user ${req.session.user.id}: ${list.data.resultSizeEstimate} results`);
     const messages = list.data.messages || [];
 
     const detailed = await Promise.all(messages.map(async (m) => {
