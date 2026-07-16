@@ -1160,8 +1160,7 @@ app.get('/gmail/inbox', requireAuth, async (req, res) => {
     const list = await gmail.users.messages.list({
   userId: "me",
   maxResults,
-  labelIds: ["INBOX"],
-  q: "in:inbox", // ensures category tabs (promotions/updates/social) aren't silently excluded
+  q: "in:inbox",   // catches Promotions/Updates/Social tabs too, same reach as gmail/search
   pageToken
 });
 console.log(`📬 Gmail inbox list for user ${req.session.user.id}: ${list.data.resultSizeEstimate} results`);
