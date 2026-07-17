@@ -1465,11 +1465,10 @@ app.get('/gmail/thread/:id', requireAuth, async (req, res) => {
 // ================= GMAIL: SEND MAIL =================
 // ================= GMAIL: SEND MAIL =================
 app.post('/gmail/send', requireAuth, async (req, res) => {
-  const { to, subject, body } = req.body;
+  const { to, subject, body, threadId, inReplyTo, references } = req.body;   // NEW — threading fields
   if (typeof to !== "string" || typeof subject !== "string" || typeof body !== "string") {
     return res.status(400).json({ message: "Missing to/subject/body" });
   }
-
   // NEW — reject bad recipient addresses before wasting a Gmail API call.
   // A malformed "to" can still get accepted by the API and just bounce
   // silently, which is exactly what "sent but never arrives" looks like.
@@ -1488,39 +1487,46 @@ app.post('/gmail/send', requireAuth, async (req, res) => {
       ? subject
       : `=?UTF-8?B?${Buffer.from(subject, "utf-8").toString("base64")}?=`;
 
+   // NEW — these three headers are what make Gmail attach the reply to the
+    // ORIGINAL thread instead of starting a new one. Without In-Reply-To
+    // and References, this send always created a separate thread, which is
+    // why loadThread(oldThreadId) never showed the reply you just sent.
     const messageParts = [
       `To: ${to}`,
-      `Subject: ${encodedSubject}`,          // CHANGED — was raw subject
-      "MIME-Version: 1.0",                    // NEW — missing before; some
-                                               // servers/spam filters silently
-                                               // drop messages without it
+      `Subject: ${encodedSubject}`,
+      "MIME-Version: 1.0",
       "Content-Type: text/plain; charset=utf-8",
-      "Content-Transfer-Encoding: 7bit",      // NEW
+      "Content-Transfer-Encoding: 7bit",
+      ...(inReplyTo ? [`In-Reply-To: ${inReplyTo}`] : []),
+      ...(references ? [`References: ${references}`] : []),
       "",
       body
     ];
-    const raw = Buffer.from(messageParts.join("\r\n"))  // CHANGED — was "\n",
-                                                          // RFC 5322 requires CRLF
+    const raw = Buffer.from(messageParts.join("\r\n"))
       .toString("base64")
       .replace(/\+/g, "-")
       .replace(/\//g, "_")
       .replace(/=+$/, "");
 
-    const sendResult = await gmail.users.messages.send({   // CHANGED — capture result
+    // NEW — pass threadId in requestBody so Gmail files the sent message
+    // into the same thread even if header-based matching doesn't kick in.
+    const sendResult = await gmail.users.messages.send({
       userId: "me",
-      requestBody: { raw }
+      requestBody: {
+        raw,
+        ...(threadId ? { threadId } : {})
+      }
     });
 
-    // NEW — log the actual Gmail message/thread id so you can confirm
-    // in the logs that a real send happened, not just that the request
-    // didn't throw.
     console.log("✅ GMAIL SEND OK:", {
       to,
       messageId: sendResult.data.id,
       threadId: sendResult.data.threadId
     });
 
-    res.json({ message: "Sent", messageId: sendResult.data.id }); // CHANGED — include id
+    // CHANGED — return the threadId too, so the client can immediately
+    // reload the correct thread without guessing.
+    res.json({ message: "Sent", messageId: sendResult.data.id, threadId: sendResult.data.threadId });
   } catch (err) {
     if (err.code === "GMAIL_NOT_CONNECTED") {
       return res.status(409).json({ message: "Gmail not connected", connected: false });
