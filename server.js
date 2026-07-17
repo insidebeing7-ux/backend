@@ -1332,30 +1332,20 @@ app.get('/gmail/message/:id', requireAuth, async (req, res) => {
     // it fell through to returning the raw part body regardless of type —
     // which dumped raw HTML/CSS source (e.g. "72px !important { ... }")
     // straight into bodyText.
-   res.json({
-  id: req.params.id,
-  threadId: full.data.threadId,
-  from: get("From"),
-  to: get("To"),
-  subject: get("Subject"),
-  date: get("Date"),
-  bodyText: safeBodyText.slice(0, 20000),
-  bodyHtml: html ? html.slice(0, 100000) : null
-});
-
-    const { plain, html } = extractParts(full.data.payload);
+  const { plain, html } = extractParts(full.data.payload);
     const safeBodyText = (plain && plain.trim().length > 0)
       ? plain
       : htmlToPlainText(html);
 
     res.json({
       id: req.params.id,
+      threadId: full.data.threadId,
       from: get("From"),
       to: get("To"),
       subject: get("Subject"),
       date: get("Date"),
       bodyText: safeBodyText.slice(0, 20000),
-      bodyHtml: html ? html.slice(0, 100000) : null   // CHANGED — actually send the HTML now
+      bodyHtml: html ? html.slice(0, 100000) : null
     });
   } catch (err) {
     if (err.code === "GMAIL_NOT_CONNECTED") {
