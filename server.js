@@ -948,10 +948,24 @@ app.post('/ai-request', aiLimiter, requireAuth, async (req, res) => {
       safeBodyInstructions = bodyInstructions.trim().slice(0, 300).replace(/\0/g, "");
     }
 
-    // Use session aiMode first, fall back to body instructions
+    // CHANGED — prefer instructions sent explicitly in THIS request over
+    // req.session.aiMode. Auto AI (both chat and Gmail) runs on a background
+    // polling loop that calls this endpoint independently of whatever the
+    // person's session happens to have saved — relying on session state here
+    // caused stale/empty instructions to silently override the mode the
+    // person actually set, or produced no instructions at all if the
+    // session's aiMode was never populated for that request's cookie jar.
+    // The client (AiMode.get()) is now the single source of truth; session
+    // aiMode is kept only as a last-resort fallback for legacy callers.
     const instructions = safeMode === "ai_writer"
       ? ""
-      : (req.session.aiMode || safeBodyInstructions || "");
+      : (safeBodyInstructions || req.session.aiMode || "");
+
+    console.log("🤖 AI REQUEST:", {
+      mode: safeMode,
+      instructionsSource: safeBodyInstructions ? "body" : (req.session.aiMode ? "session" : "none"),
+      instructionsPreview: instructions.slice(0, 60)
+    });
 
     try {
       await axios.get(process.env.AI_URL + "/health", { timeout: 30000 });
