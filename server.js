@@ -1152,10 +1152,30 @@ function extractParts(payload) {
   let plain = "";
   let html = "";
 
-  function decode(data) {
+  // NEW — reads the charset out of a part's Content-Type header (e.g.
+  // "text/plain; charset=ISO-8859-1"), defaulting to utf-8. Decoding
+  // everything as utf-8 regardless of the real charset is what produced
+  // garbled "boxes" (mojibake) for emails sent from clients that use
+  // Latin-1/Windows-1252 encoding.
+  function getCharset(part) {
+    const headers = part.headers || [];
+    const contentType = headers.find(h => h.name.toLowerCase() === "content-type")?.value || "";
+    const match = contentType.match(/charset=["']?([^"';]+)/i);
+    return match ? match[1].trim().toLowerCase() : "utf-8";
+  }
+
+  function decode(data, charset) {
     if (!data) return "";
     try {
-      return Buffer.from(data, "base64").toString("utf-8");
+      const buf = Buffer.from(data, "base64");
+      // Node's Buffer.toString supports utf-8/utf8/latin1/ascii natively;
+      // anything else (e.g. windows-1252, iso-8859-1) falls back to latin1,
+      // which is a close-enough superset for most Western email content.
+      const supported = ["utf-8", "utf8", "ascii", "latin1", "binary"];
+      const normalizedCharset = charset === "iso-8859-1" || charset === "windows-1252"
+        ? "latin1"
+        : charset;
+      return buf.toString(supported.includes(normalizedCharset) ? normalizedCharset : "utf-8");
     } catch (_) {
       return "";
     }
@@ -1164,16 +1184,17 @@ function extractParts(payload) {
   function walk(part) {
     if (!part) return;
     const mimeType = part.mimeType || "";
+    const charset = getCharset(part);
 
     if (mimeType === "text/plain" && part.body?.data) {
-      plain += decode(part.body.data);
+      plain += decode(part.body.data, charset);
     } else if (mimeType === "text/html" && part.body?.data) {
-      html += decode(part.body.data);
+      html += decode(part.body.data, charset);
     } else if (part.parts && part.parts.length > 0) {
       part.parts.forEach(walk);
     } else if (part.body?.data && !mimeType.startsWith("multipart/")) {
       if (!plain && !html) {
-        plain += decode(part.body.data);
+        plain += decode(part.body.data, charset);
       }
     }
   }
@@ -1441,6 +1462,7 @@ app.get('/gmail/thread/:id', requireAuth, async (req, res) => {
       const from = get("From");
       return {
         id: full.id,
+        messageIdHeader: get("Message-ID") || get("Message-Id") || null,   // NEW
         from,
         to: get("To"),
         subject: get("Subject"),
