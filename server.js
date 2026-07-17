@@ -1142,6 +1142,67 @@ function gmailResultPage({ success, message }) {
   `;
 }
 
+// NEW — walks the Gmail MIME tree and returns { plain, html } bodies,
+// recursing into multipart/alternative and multipart/related containers.
+// This is what /gmail/message/:id and /gmail/thread/:id rely on, and it
+// was missing entirely, which crashed both routes with a ReferenceError
+// ("extractParts is not defined") that surfaced in the app as
+// "Could not load message."
+function extractParts(payload) {
+  let plain = "";
+  let html = "";
+
+  function decode(data) {
+    if (!data) return "";
+    try {
+      return Buffer.from(data, "base64").toString("utf-8");
+    } catch (_) {
+      return "";
+    }
+  }
+
+  function walk(part) {
+    if (!part) return;
+    const mimeType = part.mimeType || "";
+
+    if (mimeType === "text/plain" && part.body?.data) {
+      plain += decode(part.body.data);
+    } else if (mimeType === "text/html" && part.body?.data) {
+      html += decode(part.body.data);
+    } else if (part.parts && part.parts.length > 0) {
+      part.parts.forEach(walk);
+    } else if (part.body?.data && !mimeType.startsWith("multipart/")) {
+      if (!plain && !html) {
+        plain += decode(part.body.data);
+      }
+    }
+  }
+
+  walk(payload);
+  return { plain, html };
+}
+
+// NEW — strips tags from an HTML body to produce a readable plain-text
+// fallback when a message has no text/plain part at all.
+function htmlToPlainText(html) {
+  if (!html) return "";
+  return html
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n\n")
+    .replace(/<\/div>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 app.get('/auth/gmail/callback', async (req, res) => {
   const code = req.query.code;
   const userId = Number(req.query.state);
