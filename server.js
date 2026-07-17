@@ -957,10 +957,7 @@ app.post('/ai-request', aiLimiter, requireAuth, async (req, res) => {
     // session's aiMode was never populated for that request's cookie jar.
     // The client (AiMode.get()) is now the single source of truth; session
     // aiMode is kept only as a last-resort fallback for legacy callers.
-    const instructions = safeMode === "ai_writer"
-      ? ""
-      : (safeBodyInstructions || req.session.aiMode || "");
-
+    const instructions = safeBodyInstructions || req.session.aiMode || "";
     console.log("🤖 AI REQUEST:", {
       mode: safeMode,
       instructionsSource: safeBodyInstructions ? "body" : (req.session.aiMode ? "session" : "none"),
@@ -1237,14 +1234,15 @@ console.log(`📬 Gmail inbox list for user ${req.session.user.id}: ${list.data.
       const headers = full.data.payload.headers || [];
       const get = (name) => headers.find(h => h.name === name)?.value || "";
       return {
-        id: m.id,
-        from: get("From"),
-        subject: get("Subject"),
-        date: get("Date"),
-        snippet: full.data.snippet || "",
-        unread: (full.data.labelIds || []).includes("UNREAD"),
-        internalDate: Number(full.data.internalDate) || 0   // ★ NEW — real timestamp from Gmail, ms since epoch
-      };
+  id: m.id,
+  threadId: full.data.threadId,
+  from: get("From"),
+  subject: get("Subject"),
+  date: get("Date"),
+  snippet: full.data.snippet || "",
+  unread: (full.data.labelIds || []).includes("UNREAD"),
+  internalDate: Number(full.data.internalDate) || 0
+};
     }));
 
     // ★ NEW — guarantee newest-first regardless of what order the API returned
@@ -1334,49 +1332,16 @@ app.get('/gmail/message/:id', requireAuth, async (req, res) => {
     // it fell through to returning the raw part body regardless of type —
     // which dumped raw HTML/CSS source (e.g. "72px !important { ... }")
     // straight into bodyText.
-    function extractParts(payload, found = { plain: null, html: null }) {
-      if (!payload) return found;
-
-      if (payload.mimeType === "text/plain" && payload.body?.data && !found.plain) {
-        found.plain = Buffer.from(payload.body.data, "base64").toString("utf-8");
-      }
-      if (payload.mimeType === "text/html" && payload.body?.data && !found.html) {
-        found.html = Buffer.from(payload.body.data, "base64").toString("utf-8");
-      }
-
-      if (payload.parts) {
-        for (const part of payload.parts) {
-          extractParts(part, found);
-          if (found.plain && found.html) break;
-        }
-      }
-      return found;
-    }
-
-    // NEW — strips tags/scripts/styles from HTML to build a safe plain-text
-    // fallback when the email has no text/plain part at all. This is what
-    // was missing: previously the "fallback" path returned raw HTML/CSS
-    // source, not a stripped, readable version of it.
-    function htmlToPlainText(html) {
-      if (!html) return "";
-      return html
-        .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
-        .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
-        .replace(/<!--[\s\S]*?-->/g, "")
-        .replace(/<br\s*\/?>/gi, "\n")
-        .replace(/<\/p>/gi, "\n\n")
-        .replace(/<\/(div|tr|li|h[1-6])>/gi, "\n")
-        .replace(/<[^>]+>/g, "")
-        .replace(/&nbsp;/g, " ")
-        .replace(/&amp;/g, "&")
-        .replace(/&lt;/g, "<")
-        .replace(/&gt;/g, ">")
-        .replace(/&#39;/g, "'")
-        .replace(/&quot;/g, '"')
-        .replace(/[ \t]+\n/g, "\n")
-        .replace(/\n{3,}/g, "\n\n")
-        .trim();
-    }
+   res.json({
+  id: req.params.id,
+  threadId: full.data.threadId,
+  from: get("From"),
+  to: get("To"),
+  subject: get("Subject"),
+  date: get("Date"),
+  bodyText: safeBodyText.slice(0, 20000),
+  bodyHtml: html ? html.slice(0, 100000) : null
+});
 
     const { plain, html } = extractParts(full.data.payload);
     const safeBodyText = (plain && plain.trim().length > 0)
@@ -1400,7 +1365,52 @@ app.get('/gmail/message/:id', requireAuth, async (req, res) => {
     res.status(500).json({ message: "Could not fetch message" });
   }
 });
+app.get('/gmail/thread/:id', requireAuth, async (req, res) => {
+  try {
+    const gmail = await getGmailClientForUser(req.session.user.id);
+    const statusRow = await new Promise((resolve, reject) => {
+      db.query("SELECT gmail_email FROM users WHERE id=?", [req.session.user.id], (err, r) => {
+        if (err) return reject(err);
+        resolve(r[0]);
+      });
+    });
+    const myEmail = (statusRow?.gmail_email || "").toLowerCase();
 
+    const thread = await gmail.users.threads.get({
+      userId: "me",
+      id: req.params.id,
+      format: "full"
+    });
+
+    const messages = (thread.data.messages || []).map(full => {
+      const headers = full.payload.headers || [];
+      const get = (name) => headers.find(h => h.name === name)?.value || "";
+      const { plain, html } = extractParts(full.payload);
+      const bodyText = (plain && plain.trim().length > 0) ? plain : htmlToPlainText(html);
+      const from = get("From");
+      return {
+        id: full.id,
+        from,
+        to: get("To"),
+        subject: get("Subject"),
+        date: get("Date"),
+        internalDate: Number(full.internalDate) || 0,
+        bodyText: bodyText.slice(0, 20000),
+        bodyHtml: html ? html.slice(0, 100000) : null,
+        isSent: myEmail.length > 0 && from.toLowerCase().includes(myEmail)
+      };
+    });
+
+    messages.sort((a, b) => a.internalDate - b.internalDate);
+    res.json({ threadId: req.params.id, messages });
+  } catch (err) {
+    if (err.code === "GMAIL_NOT_CONNECTED") {
+      return res.status(409).json({ message: "Gmail not connected", connected: false });
+    }
+    console.error("❌ GMAIL THREAD ERROR:", err.message);
+    res.status(500).json({ message: "Could not fetch thread" });
+  }
+});
 // ================= GMAIL: SEND MAIL =================
 // ================= GMAIL: SEND MAIL =================
 app.post('/gmail/send', requireAuth, async (req, res) => {
