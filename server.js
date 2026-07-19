@@ -899,11 +899,24 @@ app.post('/set-ai-mode', requireAuth, (req, res) => {
   let instructions = req.body.instructions || "";
   if (instructions.length > 300) return res.status(400).json({ message: "Mode too long" });
   instructions = instructions.replace(/\0/g, "");
+
+  // NEW — persist Auto AI's own length/emoji preference alongside the
+  // free-text instructions, in the same session bag.
+  const allowedLengths = ["Short", "Medium", "Long"];
+  const length = allowedLengths.includes(req.body.length) ? req.body.length : "Medium";
+  const emoji = req.body.emoji === true;
+
   req.session.aiMode = instructions;
+  req.session.aiModeLength = length;   // NEW
+  req.session.aiModeEmoji = emoji;     // NEW
   res.json({ ok: true });
 });
 app.get('/get-ai-mode', requireAuth, (req, res) => {
-  res.json({ instructions: req.session.aiMode || "" });
+  res.json({
+    instructions: req.session.aiMode || "",
+    length: req.session.aiModeLength || "Medium",   // NEW
+    emoji: req.session.aiModeEmoji === true          // NEW
+  });
 });
 
 // ================= TOGGLE AUTO AI =================
@@ -947,6 +960,14 @@ app.post('/ai-request', aiLimiter, requireAuth, async (req, res) => {
     if (typeof tone === "string") {
       safeTone = tone.trim().slice(0, 40).replace(/\0/g, "");
     }
+    // NEW — for chat mode (Auto AI), no explicit tone is sent by the client,
+    // so fall back to the saved Auto AI length/emoji preference and pack it
+    // the same way help_me_write does, so aiserver.py can parse it uniformly.
+    if (safeMode === "chat" && !safeTone) {
+      const savedLength = req.session.aiModeLength || "Medium";
+      const savedEmoji = req.session.aiModeEmoji === true;
+      safeTone = `|length:${savedLength}|emoji:${savedEmoji}`;
+    }
 
     // Sanitize instructions from request body
     let safeBodyInstructions = "";
@@ -954,15 +975,6 @@ app.post('/ai-request', aiLimiter, requireAuth, async (req, res) => {
       safeBodyInstructions = bodyInstructions.trim().slice(0, 300).replace(/\0/g, "");
     }
 
-    // CHANGED — prefer instructions sent explicitly in THIS request over
-    // req.session.aiMode. Auto AI (both chat and Gmail) runs on a background
-    // polling loop that calls this endpoint independently of whatever the
-    // person's session happens to have saved — relying on session state here
-    // caused stale/empty instructions to silently override the mode the
-    // person actually set, or produced no instructions at all if the
-    // session's aiMode was never populated for that request's cookie jar.
-    // The client (AiMode.get()) is now the single source of truth; session
-    // aiMode is kept only as a last-resort fallback for legacy callers.
     const instructions = safeBodyInstructions || req.session.aiMode || "";
     console.log("🤖 AI REQUEST:", {
       mode: safeMode,
