@@ -936,11 +936,17 @@ app.post('/toggle-auto-ai', requireAuth, (req, res) => {
 // ================= AI REQUEST =================
 app.post('/ai-request', aiLimiter, requireAuth, async (req, res) => {
   try {
-    let { text, mode, instructions: bodyInstructions } = req.body;
+   let { text, mode, instructions: bodyInstructions, tone } = req.body;
     if (typeof text !== "string") return res.status(400).json({ message: "Invalid input" });
     text = text.trim().slice(0, 2000);
-    const allowedModes = ["chat", "ai_writer", "summary", "greeting"];
+    const allowedModes = ["chat", "ai_writer", "summary", "greeting", "help_me_write"];
     const safeMode = allowedModes.includes(mode) ? mode : "chat";
+
+    // NEW — sanitize tone the same way instructions is sanitized below
+    let safeTone = "";
+    if (typeof tone === "string") {
+      safeTone = tone.trim().slice(0, 40).replace(/\0/g, "");
+    }
 
     // Sanitize instructions from request body
     let safeBodyInstructions = "";
@@ -974,7 +980,8 @@ app.post('/ai-request', aiLimiter, requireAuth, async (req, res) => {
     const response = await callAIWithRetry({
       text,
       instructions,
-      mode: safeMode
+      mode: safeMode,
+      tone: safeTone   // NEW
     });
     return res.json({ reply: response.data.reply });
   } catch (err) {
