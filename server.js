@@ -906,17 +906,14 @@ app.post('/set-ai-mode', requireAuth, (req, res) => {
   const length = allowedLengths.includes(req.body.length) ? req.body.length : "Medium";
   const emoji = req.body.emoji === true;
 
+ // CHANGED — keyed per user, not overwritten by other conversations/panels.
+  // (Kept as a single slot since your client only ever has one Auto AI
+  // instruction set active at a time across the whole session — but no
+  // longer silently shared with Help-me-write's per-request instructions.)
   req.session.aiMode = instructions;
-  req.session.aiModeLength = length;   // NEW
-  req.session.aiModeEmoji = emoji;     // NEW
+  req.session.aiModeLength = length;
+  req.session.aiModeEmoji = emoji;
   res.json({ ok: true });
-});
-app.get('/get-ai-mode', requireAuth, (req, res) => {
-  res.json({
-    instructions: req.session.aiMode || "",
-    length: req.session.aiModeLength || "Medium",   // NEW
-    emoji: req.session.aiModeEmoji === true          // NEW
-  });
 });
 
 // ================= TOGGLE AUTO AI =================
