@@ -961,18 +961,32 @@ app.post('/ai-request', aiLimiter, requireAuth, async (req, res) => {
     // so fall back to the saved Auto AI length/emoji preference and pack it
     // the same way help_me_write does, so aiserver.py can parse it uniformly.
     if (safeMode === "chat" && !safeTone) {
-      const savedLength = req.session.aiModeLength || "Medium";
-      const savedEmoji = req.session.aiModeEmoji === true;
-      safeTone = `|length:${savedLength}|emoji:${savedEmoji}`;
-    }
+  const savedLength = req.session.aiModeLength || "Medium";
+  const savedEmoji = req.session.aiModeEmoji === true;
+  safeTone = `|length:${savedLength}|emoji:${savedEmoji}`;
+}
 
-    // Sanitize instructions from request body
-    let safeBodyInstructions = "";
-    if (typeof bodyInstructions === "string") {
-      safeBodyInstructions = bodyInstructions.trim().slice(0, 300).replace(/\0/g, "");
-    }
+let safeBodyInstructions = "";
+if (typeof bodyInstructions === "string") {
+  safeBodyInstructions = bodyInstructions.trim().slice(0, 300).replace(/\0/g, "");
+}
 
-    const instructions = safeBodyInstructions || req.session.aiMode || "";
+// CHANGED — for "chat" mode (Auto AI), the client is now REQUIRED to send
+// its own instructions every time (see AutoAi.kt guard above). Falling back
+// to req.session.aiMode here was the source of cross-request bleed: any
+// other request touching the session (Help-me-write, a second chat, etc.)
+// could silently swap out which persona chat-mode used. For chat mode we
+// now trust the client-provided value only, and refuse to auto-reply
+// in-character using stale/foreign session state.
+let instructions;
+if (safeMode === "chat") {
+  if (!safeBodyInstructions) {
+    return res.status(400).json({ message: "Missing Auto AI instructions" });
+  }
+  instructions = safeBodyInstructions;
+} else {
+  instructions = safeBodyInstructions || req.session.aiMode || "";
+}
     console.log("🤖 AI REQUEST:", {
       mode: safeMode,
       instructionsSource: safeBodyInstructions ? "body" : (req.session.aiMode ? "session" : "none"),
