@@ -195,6 +195,12 @@ const aiLimiter = rateLimit({
 });
 const aiQuota = {};
 
+const siteAiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 15,
+  handler: (req, res) => res.status(429).json({ message: "Too many requests. Try again shortly." })
+});
+
 // ================= SESSION =================
 const MySQLStore = require('express-mysql-session')(session);
 
@@ -503,6 +509,7 @@ app.get('/user-data', requireAuth, (req, res) => {
 });
 
 // ================= CSRF TOKEN =================
+// ================= CSRF TOKEN =================
 app.get('/csrf-token', (req, res) => {
   try {
     const token = req.csrfToken();
@@ -514,6 +521,26 @@ app.get('/csrf-token', (req, res) => {
     res.status(500).json({ message: "CSRF token error" });
   }
 });
+
+// ================= SITE AI (landing page assistant) =================
+app.post('/site-ai', siteAiLimiter, csrfProtection, async (req, res) => {
+  const text = typeof req.body.text === "string" ? req.body.text.trim().slice(0, 300) : "";
+  if (!text) return res.status(400).json({ message: "Missing text" });
+
+  try {
+    const response = await axios.post(process.env.AI_URL + "/site-ai", { text }, { timeout: 20000 });
+    res.json(response.data);
+  } catch (err) {
+    console.error("❌ SITE AI PROXY ERROR:", err.message);
+    res.status(503).json({
+      reply: "The assistant is waking up — try again in a few seconds.",
+      action: null,
+      target: null
+    });
+  }
+});
+
+// ================= GET USER BY USERNAME =================
 
 // ================= GET USER BY USERNAME =================
 app.get('/user/:username', requireAuth, (req, res) => {
