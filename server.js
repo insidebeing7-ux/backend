@@ -1117,8 +1117,106 @@ app.post('/upload-voice-sample', requireAuth, upload.single("file"), async (req,
   );
 });
 
-// ================= GET AUTO AI =================
-app.get('/get-auto-ai', requireAuth, (req, res) => {
+// ================= PERSONAL ASSISTANT (per-user, scoped) =================
+// SECURITY: this route NEVER accepts a target user id / contact id from the
+// client for "whose data" — it always derives the caller from
+// req.session.user.id. This is what guarantees User A's assistant can never
+// see User B's conversations, contacts, or messages.
+const assistantLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 12,
+  handler: (req, res) => res.status(429).json({ message: "Too many assistant requests. Try again shortly." })
+});
+
+// Resolves a name mentioned in the user's question to one of THEIR OWN
+// contacts only (people they've actually exchanged messages with) —
+// never a global username lookup, so it can't be used to probe other users.
+function resolveOwnContactByName(userId, rawName) {
+  return new Promise((resolve, reject) => {
+    const needle = `%${rawName.replace(/[^a-zA-Z0-9_. ]/g, "")}%`;
+    db.query(
+      `SELECT DISTINCT u.id, u.username
+       FROM messages m
+       JOIN users u ON u.id = CASE WHEN m.sender_id=? THEN m.receiver_id ELSE m.sender_id END
+       WHERE (m.sender_id=? OR m.receiver_id=?) AND u.username LIKE ?
+       LIMIT 1`,
+      [userId, userId, userId, needle],
+      (err, result) => {
+        if (err) return reject(err);
+        resolve(result[0] || null);
+      }
+    );
+  });
+}
+
+function getOwnConversationsSummary(userId) {
+  return new Promise((resolve, reject) => {
+    db.query(
+      `SELECT m.*, u.username AS other_username
+       FROM messages m
+       INNER JOIN (
+         SELECT CASE WHEN sender_id=? THEN receiver_id ELSE sender_id END AS other_user, MAX(id) AS last_id
+         FROM messages WHERE sender_id=? OR receiver_id=?
+         GROUP BY other_user
+       ) latest ON m.id = latest.last_id
+       JOIN users u ON u.id = latest.other_user
+       ORDER BY m.id DESC LIMIT 20`,
+      [userId, userId, userId],
+      (err, result) => { if (err) return reject(err); resolve(result); }
+    );
+  });
+}
+
+function getOwnUnreadSummary(userId) {
+  return new Promise((resolve, reject) => {
+    db.query(
+      `SELECT u.username AS sender_username, COUNT(*) AS unread_count
+       FROM messages m JOIN users u ON u.id = m.sender_id
+       WHERE m.receiver_id=? AND m.is_read=0
+         AND m.deleted_for_everyone=0 AND m.deleted_for_receiver=0
+       GROUP BY m.sender_id, u.username`,
+      [userId],
+      (err, result) => { if (err) return reject(err); resolve(result); }
+    );
+  });
+}
+
+function getOwnMessagesWithContact(userId, contactId, limit = 30) {
+  return new Promise((resolve, reject) => {
+    db.query(
+      `SELECT sender_id, receiver_id, content, created_at FROM messages
+       WHERE ((sender_id=? AND receiver_id=?) OR (sender_id=? AND receiver_id=?))
+         AND deleted_for_everyone=0
+       ORDER BY id DESC LIMIT ?`,
+      [userId, contactId, contactId, userId, limit],
+      (err, result) => { if (err) return reject(err); resolve(result.reverse()); }
+    );
+  });
+}
+
+app.post('/personal-assistant', requireAuth, assistantLimiter, async (req, res) => {
+  const userId = req.session.user.id;
+  const username = req.session.user.username;
+  let question = typeof req.body.question === "string" ? req.body.question.trim().slice(0, 500) : "";
+  if (!question) return res.status(400).json({ message: "Missing question" });
+
+  try {
+    const [conversations, unread] = await Promise.all([
+      getOwnConversationsSummary(userId),
+      getOwnUnreadSummary(userId)
+    ]);
+
+    // Try to detect "about <name>" / "with <name>" style mentions so we can
+    // pull that contact's own message history too — still scoped to this
+    // user's own contacts only.
+    let contactHistoryBlock = "";
+    const nameMatch = question.match(/(?:with|about|from)\s+([a-zA-Z0-9_.]{3,20})/i);
+    if (nameMatch) {
+      const contact = await resolveOwnContactByName(userId, nameMatch[1]);
+      if (contact) {
+        const history = await getOwnMessagesWithContact(userId, contact.id);
+        contactHistoryBlock = `\n\nRecent messages with ${contact.username}:\n` +
+          history.map(m =>
   if (!req.session.user) return res.json({ enabled: false });
   const user_id = req.session.user.id;
   const receiver_id = req.query.receiver_id;
