@@ -1216,7 +1216,53 @@ app.post('/personal-assistant', requireAuth, assistantLimiter, async (req, res) 
       if (contact) {
         const history = await getOwnMessagesWithContact(userId, contact.id);
         contactHistoryBlock = `\n\nRecent messages with ${contact.username}:\n` +
-          history.map(m =>
+          history.map(m => `${m.sender_id === userId ? username : contact.username}: ${m.content}`).join("\n");
+      }
+    }
+
+    const conversationsSummary = conversations
+      .map(c => `- ${c.other_username}: "${c.content}"`)
+      .join("\n");
+    const unreadSummary = unread
+      .map(u => `${u.sender_username} (${u.unread_count} unread)`)
+      .join(", ") || "none";
+
+    const prompt =
+      `You are ${username}'s personal assistant. Answer their question using only ` +
+      `the context below, which is scoped to their own conversations.\n\n` +
+      `Recent conversations:\n${conversationsSummary}\n\n` +
+      `Unread messages: ${unreadSummary}` +
+      contactHistoryBlock +
+      `\n\nQuestion: ${question}`;
+
+    let aiResponse;
+    try {
+      aiResponse = await axios.post(process.env.AI_URL + "/ai", {
+        text: prompt,
+        instructions: "",
+        mode: "personal_assistant"
+      }, { timeout: 20000 });
+    } catch (aiErr) {
+      console.warn("⚠️ PERSONAL ASSISTANT AI ERROR:", aiErr.code, aiErr.message);
+      return res.status(503).json({
+        message: "The assistant is waking up — try again in a few seconds.",
+        waking: true
+      });
+    }
+
+    const reply = typeof aiResponse.data?.reply === "string"
+      ? aiResponse.data.reply.slice(0, 2000)
+      : "Sorry, I couldn't find an answer.";
+
+    res.json({ reply });
+  } catch (err) {
+    console.error("❌ PERSONAL ASSISTANT ERROR:", err.message);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// ================= GET AUTO AI =================
+app.get('/get-ai-mode-status', requireAuth, (req, res) => {
   if (!req.session.user) return res.json({ enabled: false });
   const user_id = req.session.user.id;
   const receiver_id = req.query.receiver_id;
