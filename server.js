@@ -33,12 +33,21 @@ const GMAIL_REDIRECT_URI = process.env.GMAIL_REDIRECT_URI;
 
 // NEW — normalize AI_URL once at startup so "/health" and "/ai" never get a
 // double slash or point at "undefined/health" if the env var is missing.
+// NEW — normalize AI_URL once at startup so "/health" and "/ai" never get a
+// double slash or point at "undefined/health" if the env var is missing.
 if (!process.env.AI_URL) {
   console.error("❌ FATAL: AI_URL environment variable is missing.");
 } else {
   process.env.AI_URL = process.env.AI_URL.replace(/\/+$/, ""); // strip trailing slash(es)
 }
 console.log("🤖 AI_URL configured as:", process.env.AI_URL || "MISSING");
+
+// NEW — separate AI backend used ONLY by the Kairos Personal Assistant.
+// This is a different deployed service (Groq-backed) from the one used
+// for Auto AI / chat replies / site-ai, so it gets its own URL constant
+// instead of sharing process.env.AI_URL.
+const KAIROS_AI_URL = "https://assistantai-kairos.onrender.com";
+console.log("🧠 KAIROS_AI_URL configured as:", KAIROS_AI_URL);
 const GMAIL_SCOPES = [
   "https://www.googleapis.com/auth/gmail.readonly",
   "https://www.googleapis.com/auth/gmail.send"
