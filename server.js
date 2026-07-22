@@ -1244,9 +1244,9 @@ app.post('/personal-assistant', requireAuth, assistantLimiter, async (req, res) 
       contactHistoryBlock +
       `\n\nQuestion: ${question}`;
 
-    let aiResponse;
+   let aiResponse;
     try {
-      aiResponse = await axios.post(process.env.AI_URL + "/ai", {
+      aiResponse = await axios.post(KAIROS_AI_URL + "/ai", {
         text: prompt,
         instructions: "",
         mode: "personal_assistant"
