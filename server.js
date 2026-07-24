@@ -31,20 +31,13 @@ const GMAIL_CLIENT_ID = process.env.GMAIL_CLIENT_ID;
 const GMAIL_CLIENT_SECRET = process.env.GMAIL_CLIENT_SECRET;
 const GMAIL_REDIRECT_URI = process.env.GMAIL_REDIRECT_URI;
 
-// NEW — normalize AI_URL once at startup so "/health" and "/ai" never get a
-// double slash or point at "undefined/health" if the env var is missing.
-// Hardcoded fallback (not set in env) — this is the Flask/Groq-backed AI
-// service used ONLY by /site-ai (index.html + user.html landing widgets).
-// Distinct from KAIROS_AI_URL below, which powers the separate Personal
-// Assistant used inside the Android app (MainActivity.kt) and must NOT
-// be affected by this value.
-const SITE_AI_URL = "https://demo-27zy.onrender.com";
-if (!process.env.AI_URL) {
-  process.env.AI_URL = SITE_AI_URL;
-} else {
-  process.env.AI_URL = process.env.AI_URL.replace(/\/+$/, ""); // strip trailing slash(es)
+// AI_URL must now be provided via environment variable — no hardcoded
+// fallback to the old demo service. Normalize to strip trailing slashes
+// so "/health" and "/ai" never get a double slash.
+if (process.env.AI_URL) {
+  process.env.AI_URL = process.env.AI_URL.replace(/\/+$/, "");
 }
-console.log("🤖 AI_URL configured as:", process.env.AI_URL);
+console.log("🤖 AI_URL configured as:", process.env.AI_URL || "NOT SET");
 
 // NEW — separate AI backend used ONLY by the Kairos Personal Assistant.
 // This is a different deployed service (Groq-backed) from the one used
