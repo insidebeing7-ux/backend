@@ -539,20 +539,39 @@ app.post('/site-ai', siteAiLimiter, csrfProtection, async (req, res) => {
   const text = typeof req.body.text === "string" ? req.body.text.trim().slice(0, 300) : "";
   if (!text) return res.status(400).json({ message: "Missing text" });
 
-  const maxAttempts = 4;                 // CHANGED — was 3
+  const maxAttempts = 3;
   let lastErr;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      const response = await axios.post(process.env.AI_URL + "/site-ai", { text }, { timeout: 30000 }); // CHANGED — was 25000
+      const response = await axios.post(process.env.AI_URL + "/site-ai", { text }, { timeout: 30000 });
       return res.json(response.data);
     } catch (err) {
       lastErr = err;
-      console.warn(`⚠️ SITE AI attempt ${attempt}/${maxAttempts} failed:`, err.code || err.message);
-      if (attempt < maxAttempts) await new Promise(r => setTimeout(r, 6000)); // CHANGED — was 5000
+      const status = err.response?.status;
+      console.warn(
+        `⚠️ SITE AI attempt ${attempt}/${maxAttempts} failed:`,
+        err.code || err.message,
+        "status:", status,
+        "body:", JSON.stringify(err.response?.data)
+      );
+
+      // 429 means the upstream is telling us to slow down — retrying
+      // immediately only makes it worse. Stop immediately and tell the
+      // user plainly, instead of burning 3 more requests against a
+      // service that's already rate limited.
+      if (status === 429) {
+        return res.status(429).json({
+          reply: "I'm getting a lot of requests right now — please wait a moment and try again.",
+          action: null,
+          target: null
+        });
+      }
+
+      if (attempt < maxAttempts) await new Promise(r => setTimeout(r, 4000));
     }
   }
 
-  console.error("❌ SITE AI PROXY ERROR (all attempts failed):", lastErr?.message);
+  console.error("❌ SITE AI PROXY ERROR (all attempts failed):", lastErr?.message, "status:", lastErr?.response?.status);
   res.status(503).json({
     reply: "The assistant is waking up — try again in a few seconds.",
     action: null,
