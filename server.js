@@ -33,10 +33,18 @@ const GMAIL_REDIRECT_URI = process.env.GMAIL_REDIRECT_URI;
 
 // NEW — normalize AI_URL once at startup so "/health" and "/ai" never get a
 // double slash or point at "undefined/health" if the env var is missing.
-// NEW — normalize AI_URL once at startup so "/health" and "/ai" never get a
-// double slash or point at "undefined/health" if the env var is missing.
+// Hardcoded fallback (not set in env) — this is the Flask/Groq-backed AI
+// service used ONLY by /site-ai (index.html + user.html landing widgets).
+// Distinct from KAIROS_AI_URL below, which powers the separate Personal
+// Assistant used inside the Android app (MainActivity.kt) and must NOT
+// be affected by this value.
+const SITE_AI_URL = "https://demo-27zy.onrender.com";
 if (!process.env.AI_URL) {
-  console.error("❌ FATAL: AI_URL environment variable is missing.");
+  process.env.AI_URL = SITE_AI_URL;
+} else {
+  process.env.AI_URL = process.env.AI_URL.replace(/\/+$/, ""); // strip trailing slash(es)
+}
+console.log("🤖 AI_URL configured as:", process.env.AI_URL);
 } else {
   process.env.AI_URL = process.env.AI_URL.replace(/\/+$/, ""); // strip trailing slash(es)
 }
