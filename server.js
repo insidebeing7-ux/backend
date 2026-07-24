@@ -540,17 +540,26 @@ app.post('/site-ai', siteAiLimiter, csrfProtection, async (req, res) => {
   const text = typeof req.body.text === "string" ? req.body.text.trim().slice(0, 300) : "";
   if (!text) return res.status(400).json({ message: "Missing text" });
 
-  try {
-    const response = await axios.post(process.env.AI_URL + "/site-ai", { text }, { timeout: 20000 });
-    res.json(response.data);
-  } catch (err) {
-    console.error("❌ SITE AI PROXY ERROR:", err.message);
-    res.status(503).json({
-      reply: "The assistant is waking up — try again in a few seconds.",
-      action: null,
-      target: null
-    });
+  // NEW — retry through a cold start instead of failing on the first attempt
+  const maxAttempts = 3;
+  let lastErr;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const response = await axios.post(process.env.AI_URL + "/site-ai", { text }, { timeout: 25000 });
+      return res.json(response.data);
+    } catch (err) {
+      lastErr = err;
+      console.warn(`⚠️ SITE AI attempt ${attempt}/${maxAttempts} failed:`, err.code || err.message);
+      if (attempt < maxAttempts) await new Promise(r => setTimeout(r, 5000));
+    }
   }
+
+  console.error("❌ SITE AI PROXY ERROR (all attempts failed):", lastErr?.message);
+  res.status(503).json({
+    reply: "The assistant is waking up — try again in a few seconds.",
+    action: null,
+    target: null
+  });
 });
 
 // ================= GET USER BY USERNAME =================
@@ -1033,10 +1042,21 @@ if (safeMode === "chat") {
       instructionsPreview: instructions.slice(0, 60)
     });
 
-    try {
-      await axios.get(process.env.AI_URL + "/health", { timeout: 30000 });
-    } catch (pingErr) {
-      console.warn("⚠️ AI wake-up ping failed:", pingErr.code);
+    // CHANGED — retry the health ping instead of bailing on the first miss.
+    // Render free-tier cold starts can take 50-90s; one 30s attempt isn't enough.
+    const maxHealthAttempts = 3;
+    let healthy = false;
+    for (let attempt = 1; attempt <= maxHealthAttempts; attempt++) {
+      try {
+        await axios.get(process.env.AI_URL + "/health", { timeout: 30000 });
+        healthy = true;
+        break;
+      } catch (pingErr) {
+        console.warn(`⚠️ AI wake-up ping ${attempt}/${maxHealthAttempts} failed:`, pingErr.code);
+        if (attempt < maxHealthAttempts) await new Promise(r => setTimeout(r, 5000));
+      }
+    }
+    if (!healthy) {
       return res.status(503).json({ message: "AI is starting up, please try again in 15 seconds.", waking: true });
     }
 
@@ -1850,7 +1870,7 @@ async function keepKairosAlive() {
 setInterval(keepKairosAlive, 13 * 60 * 1000);
 keepKairosAlive();
 
-async function callAIWithRetry(payload, retries = 1) {
+async function callAIWithRetry(payload, retries = 3) {          // CHANGED — was 1
   for (let i = 0; i <= retries; i++) {
     try {
       return await axios.post(process.env.AI_URL + "/ai", payload, { timeout: 30000 });
@@ -1858,7 +1878,7 @@ async function callAIWithRetry(payload, retries = 1) {
       const isLast = i === retries;
       if (err?.response?.status && err.response.status < 500) throw err;
       if (isLast) throw err;
-      await new Promise(r => setTimeout(r, 3000));
+      await new Promise(r => setTimeout(r, 5000));            // CHANGED — was 3000
       console.warn(`⚠️ AI retry ${i + 1}/${retries}`);
     }
   }
