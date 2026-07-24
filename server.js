@@ -45,10 +45,6 @@ if (!process.env.AI_URL) {
   process.env.AI_URL = process.env.AI_URL.replace(/\/+$/, ""); // strip trailing slash(es)
 }
 console.log("🤖 AI_URL configured as:", process.env.AI_URL);
-} else {
-  process.env.AI_URL = process.env.AI_URL.replace(/\/+$/, ""); // strip trailing slash(es)
-}
-console.log("🤖 AI_URL configured as:", process.env.AI_URL || "MISSING");
 
 // NEW — separate AI backend used ONLY by the Kairos Personal Assistant.
 // This is a different deployed service (Groq-backed) from the one used
