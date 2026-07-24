@@ -1244,20 +1244,42 @@ app.post('/personal-assistant', requireAuth, assistantLimiter, async (req, res) 
       contactHistoryBlock +
       `\n\nQuestion: ${question}`;
 
-   let aiResponse;
+   // Kairos AI (Render free tier) sleeps after inactivity and can take
+// 30-50s+ to cold start. Ping /health first to wake the dyno, then
+// retry the real /ai call with a longer per-request timeout.
+let aiResponse;
+try {
+  try {
+    await axios.get(KAIROS_AI_URL + "/health", { timeout: 45000 });
+  } catch (healthErr) {
+    console.warn("⚠️ KAIROS health ping failed (may still be booting):", healthErr.code);
+  }
+
+  const maxAttempts = 3;
+  let lastErr;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       aiResponse = await axios.post(KAIROS_AI_URL + "/ai", {
         text: prompt,
         instructions: "",
         mode: "personal_assistant"
-      }, { timeout: 20000 });
-    } catch (aiErr) {
-      console.warn("⚠️ PERSONAL ASSISTANT AI ERROR:", aiErr.code, aiErr.message);
-      return res.status(503).json({
-        message: "The assistant is waking up — try again in a few seconds.",
-        waking: true
-      });
+      }, { timeout: 45000 });
+      lastErr = null;
+      break;
+    } catch (err) {
+      lastErr = err;
+      console.warn(`⚠️ KAIROS AI attempt ${attempt}/${maxAttempts} failed:`, err.code, err.message);
+      if (attempt < maxAttempts) await new Promise(r => setTimeout(r, 4000));
     }
+  }
+  if (lastErr) throw lastErr;
+} catch (aiErr) {
+  console.warn("⚠️ PERSONAL ASSISTANT AI ERROR:", aiErr.code, aiErr.message);
+  return res.status(503).json({
+    message: "The assistant is waking up — try again in a few seconds.",
+    waking: true
+  });
+}
 
     const reply = typeof aiResponse.data?.reply === "string"
       ? aiResponse.data.reply.slice(0, 2000)
@@ -1795,11 +1817,10 @@ let activeCalls = new Map();
 async function keepAIAlive() {
   try {
     const url = process.env.AI_URL + "/health";
-    console.log("🌐 Pinging AI health check at:", url);   // NEW — confirms exactly what URL is being hit
+    console.log("🌐 Pinging AI health check at:", url);
     const res = await axios.get(url, { timeout: 30000 });
     console.log("✅ AI server pinged, status:", res.status);
   } catch (err) {
-    // NEW — log the ACTUAL status + response body so we can see why it's a bad request
     console.warn(
       "⚠️ AI ping failed:",
       err.code,
@@ -1811,6 +1832,19 @@ async function keepAIAlive() {
 }
 setInterval(keepAIAlive, 13 * 60 * 1000);
 keepAIAlive();
+
+// NEW — keeps the Kairos personal-assistant service warm too, separately
+// from AI_URL above, since it's a distinct Render deployment.
+async function keepKairosAlive() {
+  try {
+    await axios.get(KAIROS_AI_URL + "/health", { timeout: 45000 });
+    console.log("✅ Kairos AI pinged");
+  } catch (err) {
+    console.warn("⚠️ Kairos ping failed:", err.code);
+  }
+}
+setInterval(keepKairosAlive, 13 * 60 * 1000);
+keepKairosAlive();
 
 async function callAIWithRetry(payload, retries = 1) {
   for (let i = 0; i <= retries; i++) {
