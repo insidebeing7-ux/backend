@@ -535,22 +535,20 @@ app.get('/csrf-token', (req, res) => {
   }
 });
 
-// ================= SITE AI (landing page assistant) =================
 app.post('/site-ai', siteAiLimiter, csrfProtection, async (req, res) => {
   const text = typeof req.body.text === "string" ? req.body.text.trim().slice(0, 300) : "";
   if (!text) return res.status(400).json({ message: "Missing text" });
 
-  // NEW — retry through a cold start instead of failing on the first attempt
-  const maxAttempts = 3;
+  const maxAttempts = 4;                 // CHANGED — was 3
   let lastErr;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      const response = await axios.post(process.env.AI_URL + "/site-ai", { text }, { timeout: 25000 });
+      const response = await axios.post(process.env.AI_URL + "/site-ai", { text }, { timeout: 30000 }); // CHANGED — was 25000
       return res.json(response.data);
     } catch (err) {
       lastErr = err;
       console.warn(`⚠️ SITE AI attempt ${attempt}/${maxAttempts} failed:`, err.code || err.message);
-      if (attempt < maxAttempts) await new Promise(r => setTimeout(r, 5000));
+      if (attempt < maxAttempts) await new Promise(r => setTimeout(r, 6000)); // CHANGED — was 5000
     }
   }
 
