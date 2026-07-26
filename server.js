@@ -1372,7 +1372,19 @@ try {
       ? aiResponse.data.reply.slice(0, 2000)
       : "Sorry, I couldn't find an answer.";
 
-    res.json({ reply });
+    // NEW — if the AI proposed sending a message, pass that through as a
+    // structured action. Nothing is sent yet — the client must show this
+    // as a confirm/edit/send UI and call /personal-assistant/send itself.
+    const respBody = { reply };
+    if (aiResponse.data?.action === "send_message" &&
+        typeof aiResponse.data.target_username === "string" &&
+        typeof aiResponse.data.draft === "string") {
+      respBody.action = "send_message";
+      respBody.targetUsername = aiResponse.data.target_username.slice(0, 30);
+      respBody.draft = aiResponse.data.draft.slice(0, 1000);
+    }
+
+    res.json(respBody);
   } catch (err) {
     console.error("❌ PERSONAL ASSISTANT ERROR:", err.message);
     res.status(500).json({ message: "Server error" });
