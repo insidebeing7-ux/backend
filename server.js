@@ -927,6 +927,10 @@ app.get('/user-by-id/:id', requireAuth, (req, res) => {
 
 app.post('/logout', requireAuth, (req, res) => {
   const userId = req.session.user?.id;
+  // NEW — drop the assistant's rolling conversation history on logout so a
+  // different user (or a fresh session for the same user) never inherits
+  // context from a previous session.
+  req.session.assistantHistory = [];
   db.query(
     `DELETE FROM sessions WHERE data LIKE ?`,
     [`%"id":${userId}%`],
