@@ -1331,6 +1331,17 @@ app.post('/personal-assistant', requireAuth, assistantLimiter, async (req, res) 
       contactHistoryBlock +
       `\n\nQuestion: ${question}`;
 
+    // NEW — rolling assistant-conversation history, capped at the last 5
+    // exchanges (10 messages: 5 user + 5 assistant), kept in the session so
+    // the AI can resolve "him"/"her"/"them" across turns without us ever
+    // sending the entire chat history. This is separate from the user's
+    // actual message history with contacts — it's just the last few things
+    // said to/by Kairos itself.
+    if (!Array.isArray(req.session.assistantHistory)) {
+      req.session.assistantHistory = [];
+    }
+    const rollingHistory = req.session.assistantHistory.slice(-10);
+
    // Kairos AI (Render free tier) sleeps after inactivity and can take
 // 30-50s+ to cold start. Ping /health first to wake the dyno, then
 // retry the real /ai call with a longer per-request timeout.
@@ -1349,7 +1360,8 @@ try {
       aiResponse = await axios.post(KAIROS_AI_URL + "/ai", {
         text: prompt,
         instructions: "",
-        mode: "personal_assistant"
+        mode: "personal_assistant",
+        history: rollingHistory   // NEW — last up-to-5 turns so the AI can resolve references
       }, { timeout: 45000 });
       lastErr = null;
       break;
@@ -1384,13 +1396,23 @@ try {
       respBody.draft = aiResponse.data.draft.slice(0, 1000);
     }
 
+    // NEW — append this exchange to the rolling history and cap it at the
+    // last 5 exchanges (10 entries). We store the ORIGINAL question, not the
+    // full context-stuffed prompt, and a plain-text reply (not raw JSON),
+    // so a later turn's history doesn't itself contain giant context blocks
+    // or unparsed send_message JSON.
+    req.session.assistantHistory = [
+      ...(req.session.assistantHistory || []),
+      { role: "user", content: question },
+      { role: "assistant", content: reply }
+    ].slice(-10);
+
     res.json(respBody);
   } catch (err) {
     console.error("❌ PERSONAL ASSISTANT ERROR:", err.message);
     res.status(500).json({ message: "Server error" });
   }
 });
-
 // ================= GET AUTO AI =================
 app.get('/get-ai-mode-status', requireAuth, (req, res) => {
   if (!req.session.user) return res.json({ enabled: false });
