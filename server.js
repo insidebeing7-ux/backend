@@ -1236,7 +1236,60 @@ function getOwnMessagesWithContact(userId, contactId, limit = 30) {
     );
   });
 }
+// ================= PERSONAL ASSISTANT: SEND MESSAGE (explicit confirm required) =================
+// This is only ever called AFTER the user has tapped "Send" in the assistant
+// UI on a draft the assistant proposed. It never fires automatically.
+app.post('/personal-assistant/send', requireAuth, assistantLimiter, csrfProtection, (req, res) => {
+  const sender_id = req.session.user.id;
+  const targetUsername = typeof req.body.target_username === "string" ? req.body.target_username.trim() : "";
+  let content = typeof req.body.content === "string" ? req.body.content.trim() : "";
 
+  if (!targetUsername || !content) {
+    return res.status(400).json({ message: "Missing target_username or content" });
+  }
+  if (content.length > 1000) {
+    return res.status(400).json({ message: "Message too long" });
+  }
+
+  const sanitize = require('sanitize-html');
+  content = sanitize(content, { allowedTags: [], allowedAttributes: {}, disallowedTagsMode: 'discard' });
+  if (!content) return res.status(400).json({ message: "Missing content" });
+
+  // Resolve the target username to an id AND require it to be an existing
+  // contact of this user (mirrors resolveOwnContactByName's own-contact
+  // scoping) — this stops the assistant from ever messaging someone the
+  // user hasn't actually talked to, even if the AI hallucinated a username.
+  db.query(
+    `SELECT DISTINCT u.id, u.username
+     FROM messages m
+     JOIN users u ON u.id = CASE WHEN m.sender_id=? THEN m.receiver_id ELSE m.sender_id END
+     WHERE (m.sender_id=? OR m.receiver_id=?) AND u.username=?
+     LIMIT 1`,
+    [sender_id, sender_id, sender_id, targetUsername],
+    (err, result) => {
+      if (err) return res.status(500).json({ message: "Server error" });
+      if (result.length === 0) {
+        return res.status(404).json({ message: "That contact wasn't found in your conversations" });
+      }
+      const receiver_id = result[0].id;
+      if (receiver_id === sender_id) return res.status(400).json({ message: "Cannot message yourself" });
+
+      db.query(
+        'INSERT INTO messages (sender_id, receiver_id, content) VALUES (?,?,?)',
+        [sender_id, receiver_id, content],
+        (insErr) => {
+          if (insErr) { console.error("❌ ASSISTANT SEND ERROR:", insErr); return res.status(500).json({ message: "Error sending message" }); }
+          io.to(String(receiver_id)).emit("new-message", {
+            sender_id,
+            sender_username: req.session.user.username,
+            preview: content.slice(0, 80)
+          });
+          res.json({ message: "Sent", receiver_id, receiver_username: result[0].username });
+        }
+      );
+    }
+  );
+});
 app.post('/personal-assistant', requireAuth, assistantLimiter, async (req, res) => {
   const userId = req.session.user.id;
   const username = req.session.user.username;
