@@ -931,6 +931,7 @@ app.post('/logout', requireAuth, (req, res) => {
   // different user (or a fresh session for the same user) never inherits
   // context from a previous session.
   req.session.assistantHistory = [];
+  req.session.lastDraft = null;   // NEW — don't leak the last drafted message across sessions
   db.query(
     `DELETE FROM sessions WHERE data LIKE ?`,
     [`%"id":${userId}%`],
@@ -1348,6 +1349,10 @@ app.post('/personal-assistant/send', requireAuth, assistantLimiter, csrfProtecti
             sender_username: req.session.user.username,
             preview: content.slice(0, 80)
           });
+          // NEW — this is the ground truth of what was actually sent, so
+          // it overwrites any earlier draft guess as the canonical "last
+          // message" for future "send it again" requests.
+          req.session.lastDraft = content;
           res.json({ message: "Sent", receiver_id, receiver_username: result[0].username });
         }
       );
@@ -1380,15 +1385,77 @@ app.post('/personal-assistant', requireAuth, assistantLimiter, async (req, res) 
       }
     }
 
+    // NEW — "resend the same/previous message" intent. This must be
+    // checked BEFORE the general sendMatch parsing and BEFORE calling the
+    // AI at all — otherwise the model has to reconstruct the message text
+    // from the short rolling history alone, which is exactly what caused
+    // wrong wording, unrecognized contacts, or a wall of prose instead of
+    // actually queuing a send.
+    const resendPhrase = /\b(same|previous|last)\s+(message|text|thing)\b|\bagain\b/i;
+    if (resendPhrase.test(question) && req.session.lastDraft) {
+      // try to pull a target name out of the same sentence, e.g.
+      // "send light123 the same message again"
+      const resendNameMatch = question.match(
+        /(?:to|tell|message|send|text|ping|let)\s+([a-zA-Z0-9_.]{2,20})\b/i
+      );
+      const draftToReuse = req.session.lastDraft;
+
+      if (resendNameMatch) {
+        const rawName = resendNameMatch[1];
+        const exact = await resolveOwnContactByName(userId, rawName);
+        if (exact) {
+          const replyText = `Ready to resend to ${exact.username}: "${draftToReuse}"`;
+          if (!Array.isArray(req.session.assistantHistory)) req.session.assistantHistory = [];
+          req.session.assistantHistory = [
+            ...req.session.assistantHistory,
+            { role: "user", content: question },
+            { role: "assistant", content: replyText }
+          ].slice(-10);
+          return res.json({
+            reply: replyText,
+            action: "send_message",
+            targetUsername: exact.username,
+            draft: draftToReuse
+          });
+        }
+        // no exact match — fall through to normal candidate-resolution
+        // logic below using this same rawName, instead of guessing.
+        let candidates = await findClosestOwnContacts(userId, rawName, 3);
+        if (candidates.length > 0) {
+          const replyText = `I couldn't find an exact match for "${rawName}". Tap a name below, or say/type its number (e.g. "1") to resend to them.`;
+          req.session.pendingContactChoice = {
+            candidates: candidates.map(c => ({ id: c.id, username: c.username })),
+            draft: draftToReuse,
+            createdAt: Date.now()
+          };
+          if (!Array.isArray(req.session.assistantHistory)) req.session.assistantHistory = [];
+          req.session.assistantHistory = [
+            ...req.session.assistantHistory,
+            { role: "user", content: question },
+            { role: "assistant", content: replyText }
+          ].slice(-10);
+          return res.json({
+            reply: replyText,
+            action: "choose_contact",
+            candidates: candidates.map((c, i) => ({ index: i + 1, username: c.username }))
+          });
+        }
+      } else {
+        // "send it again" with no name mentioned at all — ask, don't guess.
+        const replyText = `Who should I resend "${draftToReuse}" to? Give me their exact username.`;
+        return res.json({ reply: replyText });
+      }
+    }
+
     // NEW — detect a send/tell intent with a NAME that doesn't exactly match
     // any contact. Instead of letting the AI guess or fail, resolve the
     // closest candidates ourselves and return them as clickable options.
     // Broadened to catch more natural phrasings: "say hi to X", "tell X ...",
     // "message X ...", "ping X", "let X know ...", etc.
-   const sendMatch = question.match(
-  /(?:tell|message|send|text|ping|say\s+(?:hi|hello|hey)\s+to|let)\s+(?:to\s+)?([a-zA-Z0-9_.]{2,20})\b(?:[,:]?\s+(?:that\s+|know\s+)?(.*))?/i
-);
-if (sendMatch) {
+    const sendMatch = question.match(
+      /(?:tell|message|send|text|ping|say\s+(?:hi|hello|hey)\s+to|let)\s+(?:to\s+)?([a-zA-Z0-9_.]{2,20})\b(?:[,:]?\s+(?:that\s+|know\s+)?(.*))?/i
+    );
+    if (sendMatch) {
   const rawName = sendMatch[1];
   const restWords = (sendMatch[2] || "").trim().split(/\s+/).filter(Boolean);
 
@@ -1423,12 +1490,14 @@ if (sendMatch) {
       const greetingMatch = question.match(/^say\s+(hi|hello|hey)\s+to\b/i);
       const replyText = `I couldn't find an exact match for "${combinedName}". Tap a name below, or say/type its number (e.g. "1") to pick who to send to.`;
 
-      req.session.pendingContactChoice = {
+     req.session.pendingContactChoice = {
         candidates: candidates.map(c => ({ id: c.id, username: c.username })),
         draft: draftText || (greetingMatch ? greetingMatch[1] : ""),
         createdAt: Date.now()
       };
-
+      // NEW — also remember this as the last draft, even before a contact
+      // is confirmed, so "send it again" later can reuse it.
+      if (draftText) req.session.lastDraft = draftText;
       if (!Array.isArray(req.session.assistantHistory)) {
         req.session.assistantHistory = [];
       }
@@ -1566,6 +1635,12 @@ try {
       respBody.action = "send_message";
       respBody.targetUsername = aiResponse.data.target_username.slice(0, 30);
       respBody.draft = aiResponse.data.draft.slice(0, 1000);
+
+      // NEW — remember this as the last drafted message, so a later
+      // "send him the same thing again" doesn't require the AI to
+      // reinvent the text from scratch (which is what caused wrong/garbled
+      // resends and rambling non-JSON replies).
+      req.session.lastDraft = respBody.draft;
     }
 
     // NEW — append this exchange to the rolling history and cap it at the
