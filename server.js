@@ -1385,7 +1385,7 @@ app.post('/personal-assistant', requireAuth, assistantLimiter, async (req, res) 
     // closest candidates ourselves and return them as clickable options.
     // Broadened to catch more natural phrasings: "say hi to X", "tell X ...",
     // "message X ...", "ping X", "let X know ...", etc.
-    const sendMatch = question.match(
+   const sendMatch = question.match(
   /(?:tell|message|send|text|ping|say\s+(?:hi|hello|hey)\s+to|let)\s+(?:to\s+)?([a-zA-Z0-9_.]{2,20})\b(?:[,:]?\s+(?:that\s+|know\s+)?(.*))?/i
 );
 if (sendMatch) {
@@ -1434,7 +1434,18 @@ if (sendMatch) {
       }
       req.session.assistantHistory = [
         ...req.session.assistantHistory,
-        { role: "user", content:
+        { role: "user", content: question },
+        { role: "assistant", content: replyText }
+      ].slice(-10);
+
+      return res.json({
+        reply: replyText,
+        action: "choose_contact",
+        candidates: candidates.map((c, i) => ({ index: i + 1, username: c.username }))
+      });
+    }
+  }
+}
 
     // NEW — handle the user's follow-up pick, either "1"/"2"/"3" typed/said,
     // or an exact username they typed/tapped from the candidate list.
