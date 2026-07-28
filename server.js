@@ -1239,9 +1239,11 @@ function findClosestOwnContacts(userId, rawName, limit = 3) {
         });
 
         ranked.sort((a, b) => a.score - b.score);
-        // Only keep reasonably close matches — drop anything wildly different
-        const filtered = ranked.filter(r => r.score <= Math.max(4, needle.length));
-        resolve(filtered.slice(0, limit));
+// Only keep reasonably close matches — drop anything wildly different.
+// Capped relative to needle length so a long/garbled needle can't pull in
+// every unrelated username as a "candidate".
+const filtered = ranked.filter(r => r.score <= Math.min(4, Math.ceil(needle.length / 2)));
+resolve(filtered.slice(0, limit));
       }
     );
   });
@@ -1384,66 +1386,55 @@ app.post('/personal-assistant', requireAuth, assistantLimiter, async (req, res) 
     // Broadened to catch more natural phrasings: "say hi to X", "tell X ...",
     // "message X ...", "ping X", "let X know ...", etc.
     const sendMatch = question.match(
-      /(?:tell|message|send|text|ping|say\s+(?:hi|hello|hey)\s+to|let)\s+([a-zA-Z0-9_.]{2,20})\b(?:[,:]?\s+(?:that\s+|know\s+)?(.*))?/i
-    );
-    if (sendMatch) {
-      // NEW — try the raw captured name AND the full remainder of the
-      // question (in case the username was spoken as separate words, e.g.
-      // "light one two three" -> "light123"), normalized together.
-      const rawName = sendMatch[1];
-      // NEW — the full remainder after the verb phrase (e.g. "light one two
-      // three" from "say hi to light one two three"), used both to build a
-      // spoken-digit guess AND to detect when the "draft" is just leftover
-      // username fragments rather than a real message.
-      const remainder = question.replace(/^(?:tell|message|send|text|ping|say\s+(?:hi|hello|hey)\s+to|let)\s+/i, "");
-      const spokenGuess = normalizeSpokenDigits(remainder);
-      // NEW — normalized combo of name + draft group, e.g. rawName="light",
-      // sendMatch[2]="one two three" -> "lightonetwothree". If this equals
-      // spokenGuess (the whole remainder normalized), the "draft" is really
-      // just part of the spoken username and not an actual message.
-      const nameAndDraftNormalized = normalizeSpokenDigits(`${rawName} ${sendMatch[2] || ""}`);
+  /(?:tell|message|send|text|ping|say\s+(?:hi|hello|hey)\s+to|let)\s+(?:to\s+)?([a-zA-Z0-9_.]{2,20})\b(?:[,:]?\s+(?:that\s+|know\s+)?(.*))?/i
+);
+if (sendMatch) {
+  const rawName = sendMatch[1];
+  const restWords = (sendMatch[2] || "").trim().split(/\s+/).filter(Boolean);
 
-      const exact = await resolveOwnContactByName(userId, rawName);
-      if (!exact) {
-        let candidates = await findClosestOwnContacts(userId, rawName, 3);
-        // NEW — if the plain word didn't find anything close, retry with
-        // the spoken-digit-normalized guess (e.g. "light" -> "light123").
-        if (candidates.length === 0 && spokenGuess && spokenGuess !== rawName.toLowerCase()) {
-          candidates = await findClosestOwnContacts(userId, spokenGuess, 3);
-        }
-        if (candidates.length > 0) {
-          const greetingMatch = question.match(/^say\s+(hi|hello|hey)\s+to\b/i);
-          const isJunkDraft = spokenGuess && nameAndDraftNormalized === spokenGuess;
-          const replyText = `I couldn't find an exact match for "${rawName}". Tap a name below, or say/type its number (e.g. "1") to pick who to send to.`;
+  // Consume leading spoken-digit words into the username itself
+  // (e.g. "light" + "one two three" -> "light123"), since numeric
+  // usernames often get spoken as separate words.
+  const digitWordMap = {
+    zero:"0", one:"1", two:"2", three:"3", four:"4",
+    five:"5", six:"6", seven:"7", eight:"8", nine:"9"
+  };
+  let nameSuffix = "", consumed = 0;
+  for (const w of restWords) {
+    const lower = w.toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (digitWordMap[lower] !== undefined) { nameSuffix += digitWordMap[lower]; consumed++; }
+    else if (/^[0-9]+$/.test(lower)) { nameSuffix += lower; consumed++; }
+    else break;
+  }
+  const combinedName = rawName + nameSuffix;            // e.g. "light123"
+  const draftText = restWords.slice(consumed).join(" "); // real message only, username words stripped
 
-          // Stash what we're trying to send so the client's numeric/tap
-          // reply ("1", "2"...) can be resolved without re-parsing free text.
-          req.session.pendingContactChoice = {
-            candidates: candidates.map(c => ({ id: c.id, username: c.username })),
-            draft: isJunkDraft ? (greetingMatch ? greetingMatch[1] : "") : (sendMatch[2] || ""),
-            createdAt: Date.now()
-          };
+  const exact =
+    (await resolveOwnContactByName(userId, combinedName)) ||
+    (await resolveOwnContactByName(userId, rawName));
 
-          // NEW — record this exchange in the rolling history too, since
-          // this is an early return and would otherwise skip the
-          // history-append code at the bottom of the route entirely.
-          if (!Array.isArray(req.session.assistantHistory)) {
-            req.session.assistantHistory = [];
-          }
-          req.session.assistantHistory = [
-            ...req.session.assistantHistory,
-            { role: "user", content: question },
-            { role: "assistant", content: replyText }
-          ].slice(-10);
-
-          return res.json({
-            reply: replyText,
-            action: "choose_contact",
-            candidates: candidates.map((c, i) => ({ index: i + 1, username: c.username }))
-          });
-        }
-      }
+  if (!exact) {
+    // search ONLY against the resolved candidate name — never the raw sentence
+    let candidates = await findClosestOwnContacts(userId, combinedName, 3);
+    if (candidates.length === 0) {
+      candidates = await findClosestOwnContacts(userId, rawName, 3);
     }
+    if (candidates.length > 0) {
+      const greetingMatch = question.match(/^say\s+(hi|hello|hey)\s+to\b/i);
+      const replyText = `I couldn't find an exact match for "${combinedName}". Tap a name below, or say/type its number (e.g. "1") to pick who to send to.`;
+
+      req.session.pendingContactChoice = {
+        candidates: candidates.map(c => ({ id: c.id, username: c.username })),
+        draft: draftText || (greetingMatch ? greetingMatch[1] : ""),
+        createdAt: Date.now()
+      };
+
+      if (!Array.isArray(req.session.assistantHistory)) {
+        req.session.assistantHistory = [];
+      }
+      req.session.assistantHistory = [
+        ...req.session.assistantHistory,
+        { role: "user", content:
 
     // NEW — handle the user's follow-up pick, either "1"/"2"/"3" typed/said,
     // or an exact username they typed/tapped from the candidate list.
