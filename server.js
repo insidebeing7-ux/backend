@@ -1412,21 +1412,32 @@ app.post('/personal-assistant', requireAuth, assistantLimiter, async (req, res) 
           candidates = await findClosestOwnContacts(userId, spokenGuess, 3);
         }
         if (candidates.length > 0) {
+          const greetingMatch = question.match(/^say\s+(hi|hello|hey)\s+to\b/i);
+          const isJunkDraft = spokenGuess && nameAndDraftNormalized === spokenGuess;
+          const replyText = `I couldn't find an exact match for "${rawName}". Did you mean one of these?`;
+
           // Stash what we're trying to send so the client's numeric/tap
           // reply ("1", "2"...) can be resolved without re-parsing free text.
           req.session.pendingContactChoice = {
             candidates: candidates.map(c => ({ id: c.id, username: c.username })),
-            // NEW — if name+draft together normalize to the same thing as
-            // the whole spoken remainder, the "draft" is just leftover
-            // username fragments — blank it so Send starts empty instead
-            // of pre-filled with junk like "one two three".
-            draft: (spokenGuess && nameAndDraftNormalized === spokenGuess)
-              ? (/^say\s+(hi|hello|hey)\s+to\b/i.test(question) ? RegExp.$1 : "")
-              : (sendMatch[2] || ""),
+            draft: isJunkDraft ? (greetingMatch ? greetingMatch[1] : "") : (sendMatch[2] || ""),
             createdAt: Date.now()
           };
+
+          // NEW — record this exchange in the rolling history too, since
+          // this is an early return and would otherwise skip the
+          // history-append code at the bottom of the route entirely.
+          if (!Array.isArray(req.session.assistantHistory)) {
+            req.session.assistantHistory = [];
+          }
+          req.session.assistantHistory = [
+            ...req.session.assistantHistory,
+            { role: "user", content: question },
+            { role: "assistant", content: replyText }
+          ].slice(-10);
+
           return res.json({
-            reply: `I couldn't find an exact match for "${rawName}". Did you mean one of these?`,
+            reply: replyText,
             action: "choose_contact",
             candidates: candidates.map((c, i) => ({ index: i + 1, username: c.username }))
           });
@@ -1448,10 +1459,23 @@ app.post('/personal-assistant', requireAuth, assistantLimiter, async (req, res) 
           c => c.username.toLowerCase() === trimmed.toLowerCase()
         ) || null;
       }
-      if (chosen) {
+     if (chosen) {
         req.session.pendingContactChoice = null;
+        const replyText = `Got it — ready to send to ${chosen.username}.`;
+
+        // NEW — same reasoning: record this exchange before the early
+        // return, so the next AI call still has full conversational context.
+        if (!Array.isArray(req.session.assistantHistory)) {
+          req.session.assistantHistory = [];
+        }
+        req.session.assistantHistory = [
+          ...req.session.assistantHistory,
+          { role: "user", content: question },
+          { role: "assistant", content: replyText }
+        ].slice(-10);
+
         return res.json({
-          reply: `Got it — ready to send to ${chosen.username}.`,
+          reply: replyText,
           action: "send_message",
           targetUsername: chosen.username,
           draft: pending.draft || ""
