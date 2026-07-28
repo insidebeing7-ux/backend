@@ -1391,9 +1391,17 @@ app.post('/personal-assistant', requireAuth, assistantLimiter, async (req, res) 
       // question (in case the username was spoken as separate words, e.g.
       // "light one two three" -> "light123"), normalized together.
       const rawName = sendMatch[1];
-      const spokenGuess = normalizeSpokenDigits(
-        question.replace(/^(?:tell|message|send|text|ping|say\s+(?:hi|hello|hey)\s+to|let)\s+/i, "")
-      );
+      // NEW — the full remainder after the verb phrase (e.g. "light one two
+      // three" from "say hi to light one two three"), used both to build a
+      // spoken-digit guess AND to detect when the "draft" is just leftover
+      // username fragments rather than a real message.
+      const remainder = question.replace(/^(?:tell|message|send|text|ping|say\s+(?:hi|hello|hey)\s+to|let)\s+/i, "");
+      const spokenGuess = normalizeSpokenDigits(remainder);
+      // NEW — normalized combo of name + draft group, e.g. rawName="light",
+      // sendMatch[2]="one two three" -> "lightonetwothree". If this equals
+      // spokenGuess (the whole remainder normalized), the "draft" is really
+      // just part of the spoken username and not an actual message.
+      const nameAndDraftNormalized = normalizeSpokenDigits(`${rawName} ${sendMatch[2] || ""}`);
 
       const exact = await resolveOwnContactByName(userId, rawName);
       if (!exact) {
@@ -1408,12 +1416,12 @@ app.post('/personal-assistant', requireAuth, assistantLimiter, async (req, res) 
           // reply ("1", "2"...) can be resolved without re-parsing free text.
           req.session.pendingContactChoice = {
             candidates: candidates.map(c => ({ id: c.id, username: c.username })),
-            // NEW — if the "draft" text is actually just leftover spoken-digit
-            // fragments (i.e. it's exactly what we normalized into the name
-            // guess), don't treat it as a real message — leave it blank so the
-            // Send confirm card starts empty instead of pre-filled with junk.
-            draft: (spokenGuess && normalizeSpokenDigits(sendMatch[2] || "") === spokenGuess)
-              ? ""
+            // NEW — if name+draft together normalize to the same thing as
+            // the whole spoken remainder, the "draft" is just leftover
+            // username fragments — blank it so Send starts empty instead
+            // of pre-filled with junk like "one two three".
+            draft: (spokenGuess && nameAndDraftNormalized === spokenGuess)
+              ? (/^say\s+(hi|hello|hey)\s+to\b/i.test(question) ? RegExp.$1 : "")
               : (sendMatch[2] || ""),
             createdAt: Date.now()
           };
