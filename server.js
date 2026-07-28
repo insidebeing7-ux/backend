@@ -1195,6 +1195,23 @@ function levenshtein(a, b) {
   return dp[m][n];
 }
 
+// NEW — collapses spoken-out digits ("light one two three") into digits
+// ("light123"), since voice recognition often can't tell a username needs
+// to be said as one token. Applied only as a fallback candidate to widen
+// the search, never replacing the original raw text.
+function normalizeSpokenDigits(text) {
+  const words = {
+    zero: "0", one: "1", two: "2", three: "3", four: "4",
+    five: "5", six: "6", seven: "7", eight: "8", nine: "9"
+  };
+  return text
+    .toLowerCase()
+    .split(/\s+/)
+    .map(w => words[w] ?? w)
+    .join("")
+    .replace(/[^a-z0-9_.]/g, "");
+}
+
 // NEW — fetches ALL of this user's own contacts (their real, own message
 // history only — same security scoping as before), then ranks them by
 // closeness to rawName using substring match first, then edit distance.
@@ -1364,20 +1381,40 @@ app.post('/personal-assistant', requireAuth, assistantLimiter, async (req, res) 
     // NEW — detect a send/tell intent with a NAME that doesn't exactly match
     // any contact. Instead of letting the AI guess or fail, resolve the
     // closest candidates ourselves and return them as clickable options.
+    // Broadened to catch more natural phrasings: "say hi to X", "tell X ...",
+    // "message X ...", "ping X", "let X know ...", etc.
     const sendMatch = question.match(
-      /(?:tell|message|send|text)\s+([a-zA-Z0-9_.]{2,20})\b(?:[,:]?\s+(?:that\s+)?(.*))?/i
+      /(?:tell|message|send|text|ping|say\s+(?:hi|hello|hey)\s+to|let)\s+([a-zA-Z0-9_.]{2,20})\b(?:[,:]?\s+(?:that\s+|know\s+)?(.*))?/i
     );
     if (sendMatch) {
+      // NEW — try the raw captured name AND the full remainder of the
+      // question (in case the username was spoken as separate words, e.g.
+      // "light one two three" -> "light123"), normalized together.
       const rawName = sendMatch[1];
+      const spokenGuess = normalizeSpokenDigits(
+        question.replace(/^(?:tell|message|send|text|ping|say\s+(?:hi|hello|hey)\s+to|let)\s+/i, "")
+      );
+
       const exact = await resolveOwnContactByName(userId, rawName);
       if (!exact) {
-        const candidates = await findClosestOwnContacts(userId, rawName, 3);
+        let candidates = await findClosestOwnContacts(userId, rawName, 3);
+        // NEW — if the plain word didn't find anything close, retry with
+        // the spoken-digit-normalized guess (e.g. "light" -> "light123").
+        if (candidates.length === 0 && spokenGuess && spokenGuess !== rawName.toLowerCase()) {
+          candidates = await findClosestOwnContacts(userId, spokenGuess, 3);
+        }
         if (candidates.length > 0) {
           // Stash what we're trying to send so the client's numeric/tap
           // reply ("1", "2"...) can be resolved without re-parsing free text.
           req.session.pendingContactChoice = {
             candidates: candidates.map(c => ({ id: c.id, username: c.username })),
-            draft: sendMatch[2] || "",
+            // NEW — if the "draft" text is actually just leftover spoken-digit
+            // fragments (i.e. it's exactly what we normalized into the name
+            // guess), don't treat it as a real message — leave it blank so the
+            // Send confirm card starts empty instead of pre-filled with junk.
+            draft: (spokenGuess && normalizeSpokenDigits(sendMatch[2] || "") === spokenGuess)
+              ? ""
+              : (sendMatch[2] || ""),
             createdAt: Date.now()
           };
           return res.json({
