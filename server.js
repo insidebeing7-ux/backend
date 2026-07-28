@@ -1396,7 +1396,7 @@ app.post('/personal-assistant', requireAuth, assistantLimiter, async (req, res) 
       // try to pull a target name out of the same sentence, e.g.
       // "send light123 the same message again"
       const resendNameMatch = question.match(
-        /(?:to|tell|message|send|text|ping|let)\s+([a-zA-Z0-9_.]{2,20})\b/i
+        /(?:to|tell|message|send|text|ping|ask|let)\s+([a-zA-Z0-9_.]{2,20})\b/i
       );
       const draftToReuse = req.session.lastDraft;
 
@@ -1453,7 +1453,7 @@ app.post('/personal-assistant', requireAuth, assistantLimiter, async (req, res) 
     // Broadened to catch more natural phrasings: "say hi to X", "tell X ...",
     // "message X ...", "ping X", "let X know ...", etc.
     const sendMatch = question.match(
-      /(?:tell|message|send|text|ping|say\s+(?:hi|hello|hey)\s+to|let)\s+(?:to\s+)?([a-zA-Z0-9_.]{2,20})\b(?:[,:]?\s+(?:that\s+|know\s+)?(.*))?/i
+      /(?:tell|message|send|text|ping|ask|say\s+(?:hi|hello|hey)\s+to|let)\s+(?:to\s+)?([a-zA-Z0-9_.]{2,20})\b(?:[,:]?\s+(?:that\s+|know\s+|if\s+|whether\s+)?(.*))?/i
     );
     if (sendMatch) {
   const rawName = sendMatch[1];
@@ -1474,7 +1474,14 @@ app.post('/personal-assistant', requireAuth, assistantLimiter, async (req, res) 
     else break;
   }
   const combinedName = rawName + nameSuffix;            // e.g. "light123"
-  const draftText = restWords.slice(consumed).join(" "); // real message only, username words stripped
+  let draftText = restWords.slice(consumed).join(" ");  // real message only, username words stripped
+
+  // NEW — "ask X ..." should produce a proper question, not a bare fragment.
+  // e.g. "ask light123 is it okay" -> draft "Is it okay?"
+  const isAskVerb = /^ask\b/i.test(question.trim());
+  if (isAskVerb && draftText && !/[?]\s*$/.test(draftText)) {
+    draftText = draftText.charAt(0).toUpperCase() + draftText.slice(1) + "?";
+  }
 
   const exact =
     (await resolveOwnContactByName(userId, combinedName)) ||
