@@ -1178,22 +1178,63 @@ const assistantLimiter = rateLimit({
 // Resolves a name mentioned in the user's question to one of THEIR OWN
 // contacts only (people they've actually exchanged messages with) —
 // never a global username lookup, so it can't be used to probe other users.
-function resolveOwnContactByName(userId, rawName) {
+// NEW — Levenshtein distance, used to rank "close enough" username matches
+function levenshtein(a, b) {
+  a = a.toLowerCase(); b = b.toLowerCase();
+  const m = a.length, n = b.length;
+  const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = 0; i <= m; i++) dp[i][0] = i;
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] = a[i - 1] === b[j - 1]
+        ? dp[i - 1][j - 1]
+        : 1 + Math.min(dp[i - 1][j - 1], dp[i - 1][j], dp[i][j - 1]);
+    }
+  }
+  return dp[m][n];
+}
+
+// NEW — fetches ALL of this user's own contacts (their real, own message
+// history only — same security scoping as before), then ranks them by
+// closeness to rawName using substring match first, then edit distance.
+// Returns up to `limit` candidates: [{id, username, score}]
+function findClosestOwnContacts(userId, rawName, limit = 3) {
   return new Promise((resolve, reject) => {
-    const needle = `%${rawName.replace(/[^a-zA-Z0-9_. ]/g, "")}%`;
     db.query(
       `SELECT DISTINCT u.id, u.username
        FROM messages m
        JOIN users u ON u.id = CASE WHEN m.sender_id=? THEN m.receiver_id ELSE m.sender_id END
-       WHERE (m.sender_id=? OR m.receiver_id=?) AND u.username LIKE ?
-       LIMIT 1`,
-      [userId, userId, userId, needle],
-      (err, result) => {
+       WHERE (m.sender_id=? OR m.receiver_id=?)`,
+      [userId, userId, userId],
+      (err, contacts) => {
         if (err) return reject(err);
-        resolve(result[0] || null);
+        const needle = rawName.toLowerCase().replace(/[^a-z0-9_. ]/g, "");
+        if (!needle) return resolve([]);
+
+        const ranked = contacts.map(c => {
+          const uname = c.username.toLowerCase();
+          let score;
+          if (uname === needle) score = 0;                          // exact
+          else if (uname.includes(needle) || needle.includes(uname)) score = 1; // substring
+          else score = 2 + levenshtein(uname, needle);               // fuzzy distance
+          return { id: c.id, username: c.username, score };
+        });
+
+        ranked.sort((a, b) => a.score - b.score);
+        // Only keep reasonably close matches — drop anything wildly different
+        const filtered = ranked.filter(r => r.score <= Math.max(4, needle.length));
+        resolve(filtered.slice(0, limit));
       }
     );
   });
+}
+
+// Kept for exact-match call sites that still just want a single hit
+function resolveOwnContactByName(userId, rawName) {
+  return findClosestOwnContacts(userId, rawName, 1).then(list =>
+    list.find(c => c.username.toLowerCase() === rawName.toLowerCase()) || null
+  );
 }
 
 function getOwnConversationsSummary(userId) {
@@ -1318,6 +1359,62 @@ app.post('/personal-assistant', requireAuth, assistantLimiter, async (req, res) 
         contactHistoryBlock = `\n\nRecent messages with ${contact.username}:\n` +
           history.map(m => `${m.sender_id === userId ? username : contact.username}: ${m.content}`).join("\n");
       }
+    }
+
+    // NEW — detect a send/tell intent with a NAME that doesn't exactly match
+    // any contact. Instead of letting the AI guess or fail, resolve the
+    // closest candidates ourselves and return them as clickable options.
+    const sendMatch = question.match(
+      /(?:tell|message|send|text)\s+([a-zA-Z0-9_.]{2,20})\b(?:[,:]?\s+(?:that\s+)?(.*))?/i
+    );
+    if (sendMatch) {
+      const rawName = sendMatch[1];
+      const exact = await resolveOwnContactByName(userId, rawName);
+      if (!exact) {
+        const candidates = await findClosestOwnContacts(userId, rawName, 3);
+        if (candidates.length > 0) {
+          // Stash what we're trying to send so the client's numeric/tap
+          // reply ("1", "2"...) can be resolved without re-parsing free text.
+          req.session.pendingContactChoice = {
+            candidates: candidates.map(c => ({ id: c.id, username: c.username })),
+            draft: sendMatch[2] || "",
+            createdAt: Date.now()
+          };
+          return res.json({
+            reply: `I couldn't find an exact match for "${rawName}". Did you mean one of these?`,
+            action: "choose_contact",
+            candidates: candidates.map((c, i) => ({ index: i + 1, username: c.username }))
+          });
+        }
+      }
+    }
+
+    // NEW — handle the user's follow-up pick, either "1"/"2"/"3" typed/said,
+    // or an exact username they typed/tapped from the candidate list.
+    const pending = req.session.pendingContactChoice;
+    if (pending && Date.now() - pending.createdAt < 5 * 60 * 1000) {
+      const trimmed = question.trim();
+      const numMatch = trimmed.match(/^([1-9])$/);
+      let chosen = null;
+      if (numMatch) {
+        chosen = pending.candidates[Number(numMatch[1]) - 1] || null;
+      } else {
+        chosen = pending.candidates.find(
+          c => c.username.toLowerCase() === trimmed.toLowerCase()
+        ) || null;
+      }
+      if (chosen) {
+        req.session.pendingContactChoice = null;
+        return res.json({
+          reply: `Got it — ready to send to ${chosen.username}.`,
+          action: "send_message",
+          targetUsername: chosen.username,
+          draft: pending.draft || ""
+        });
+      }
+      // not a recognized pick — fall through and let normal handling continue,
+      // but clear stale pending state so it doesn't linger forever
+      req.session.pendingContactChoice = null;
     }
 
     const conversationsSummary = conversations
