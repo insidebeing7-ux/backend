@@ -1414,7 +1414,7 @@ app.post('/personal-assistant', requireAuth, assistantLimiter, async (req, res) 
         if (candidates.length > 0) {
           const greetingMatch = question.match(/^say\s+(hi|hello|hey)\s+to\b/i);
           const isJunkDraft = spokenGuess && nameAndDraftNormalized === spokenGuess;
-          const replyText = `I couldn't find an exact match for "${rawName}". Did you mean one of these?`;
+          const replyText = `I couldn't find an exact match for "${rawName}". Tap a name below, or say/type its number (e.g. "1") to pick who to send to.`;
 
           // Stash what we're trying to send so the client's numeric/tap
           // reply ("1", "2"...) can be resolved without re-parsing free text.
