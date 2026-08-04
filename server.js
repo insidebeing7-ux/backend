@@ -1006,6 +1006,32 @@ app.post('/toggle-auto-ai', requireAuth, (req, res) => {
   );
 });
 
+// NEW — explicit, idempotent set (no flipping). This is what the client
+// should use going forward instead of /toggle-auto-ai, because a toggle
+// is only correct if the client's belief about current state matches the
+// DB exactly. Any drift (stale in-memory flag, dropped response, process
+// restart) causes toggle to move the DB the WRONG direction — which is
+// exactly the "can't turn back on" bug: client thinks OFF, DB is actually
+// ON, client calls toggle to turn ON, DB flips OFF, and now they agree on
+// OFF forever.
+app.post('/set-auto-ai', requireAuth, (req, res) => {
+  const user_id = req.session.user.id;
+  const receiver_id = Number(req.body.receiver_id);
+  const enabled = req.body.enabled === true ? 1 : 0;
+  if (!Number.isInteger(receiver_id)) return res.status(400).json({ message: "Invalid receiver" });
+
+  db.query(
+    `INSERT INTO auto_ai_settings (user_id, receiver_id, enabled)
+     VALUES (?, ?, ?)
+     ON DUPLICATE KEY UPDATE enabled=?`,
+    [user_id, receiver_id, enabled, enabled],
+    (err) => {
+      if (err) return res.status(500).json({ message: "DB error" });
+      res.json({ enabled: !!enabled });
+    }
+  );
+});
+
 // ================= AI REQUEST =================
 // ================= AI REQUEST =================
 app.post('/ai-request', aiLimiter, requireAuth, async (req, res) => {
