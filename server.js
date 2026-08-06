@@ -157,13 +157,15 @@ app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "https://accounts.google.com", "https://apis.google.com"], // NEW — Google Identity Services SDK
-      frameSrc: ["https://accounts.google.com"], // NEW — GSI renders in an iframe
+      scriptSrc: ["'self'", "https://accounts.google.com", "https://apis.google.com"],
+      frameSrc: ["https://accounts.google.com"],
+      imgSrc: ["'self'", "data:", "https://accounts.google.com", "https://*.gstatic.com", "https://*.googleusercontent.com"], // NEW — button icon, profile pics
+      styleSrc: ["'self'", "'unsafe-inline'", "https://accounts.google.com"], // NEW — GSI injects inline styles for the button
       connectSrc: [
         "'self'",
         process.env.CLIENT_URL,
         "https://backend-1-liqz.onrender.com",
-        "https://accounts.google.com", // NEW
+        "https://accounts.google.com",
         "wss://chatflow-ai-o3e6.onrender.com",
         "wss://backend-1-liqz.onrender.com",
         "turn:global.relay.metered.ca",
