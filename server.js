@@ -252,6 +252,14 @@ app.get("/app/messaging.html", requireAuth, (req, res) => {
   res.sendFile(path.join(__dirname, "protected/messaging.html"));
 });
 
+// NEW — exposes the public Google Client ID to login.html so it can
+// initialize Google Identity Services. This value is safe to expose
+// publicly (it's the same ID already in the Android app's strings.xml).
+app.get('/config.js', (req, res) => {
+  res.type('application/javascript');
+  res.send(`window.GOOGLE_CLIENT_ID = ${JSON.stringify(GOOGLE_CLIENT_ID)};`);
+});
+
 app.use(express.static(path.join(__dirname, "public")));
 
 // CHANGED — no more separate signup; Google sign-in on /login.html handles both new and returning users
