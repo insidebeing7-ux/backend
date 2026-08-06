@@ -157,20 +157,22 @@ app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      scriptSrc: ["'self'"],
+      scriptSrc: ["'self'", "https://accounts.google.com", "https://apis.google.com"], // NEW — Google Identity Services SDK
+      frameSrc: ["https://accounts.google.com"], // NEW — GSI renders in an iframe
       connectSrc: [
-  "'self'",
-  process.env.CLIENT_URL,
-  "https://backend-1-liqz.onrender.com",
-  "wss://chatflow-ai-o3e6.onrender.com",
-  "wss://backend-1-liqz.onrender.com",
-  "turn:global.relay.metered.ca",
-  "stun:stun.l.google.com",
-  "stun:stun1.l.google.com",
-  "stun:",
-  "turn:",
-  "turns:"
-],
+        "'self'",
+        process.env.CLIENT_URL,
+        "https://backend-1-liqz.onrender.com",
+        "https://accounts.google.com", // NEW
+        "wss://chatflow-ai-o3e6.onrender.com",
+        "wss://backend-1-liqz.onrender.com",
+        "turn:global.relay.metered.ca",
+        "stun:stun.l.google.com",
+        "stun:stun1.l.google.com",
+        "stun:",
+        "turn:",
+        "turns:"
+      ],
     }
   }
 }));
@@ -252,8 +254,9 @@ app.get("/app/messaging.html", requireAuth, (req, res) => {
 
 app.use(express.static(path.join(__dirname, "public")));
 
+// CHANGED — no more separate signup; Google sign-in on /login.html handles both new and returning users
 app.get("/signup", (req, res) => {
-  res.sendFile(path.join(__dirname, "public/signup.html"));
+  res.redirect("/login.html");
 });
 
 // ================= MYSQL =================
