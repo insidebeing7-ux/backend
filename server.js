@@ -1044,9 +1044,9 @@ app.post('/ai-request', aiLimiter, requireAuth, async (req, res) => {
 
     // NEW — sanitize tone the same way instructions is sanitized below
     let safeTone = "";
-    if (typeof tone === "string") {
-      safeTone = tone.trim().slice(0, 40).replace(/\0/g, "");
-    }
+if (typeof tone === "string") {
+  safeTone = tone.trim().slice(0, 80).replace(/\0/g, ""); // widened — was cutting off "|emoji:..." on longer tone labels
+}
     // NEW — for chat mode (Auto AI), no explicit tone is sent by the client,
     // so fall back to the saved Auto AI length/emoji preference and pack it
     // the same way help_me_write does, so aiserver.py can parse it uniformly.
