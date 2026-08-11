@@ -22,8 +22,10 @@ const { validateRegister } = require("./middleware/validate");
 const userRateMap = {};
 const perUserRateLimit = require("./middleware/rateLimitPerUser");
 const { OAuth2Client } = require('google-auth-library');
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "688424361924-drqcfv2qovlnf8i5htakiihe9i4peuv2.apps.googleusercontent.com";
-const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID);
+const GOOGLE_CLIENT_ID_ANDROID = process.env.GOOGLE_CLIENT_ID_ANDROID || "688424361924-drqcfv2qovlnf8i5htakiihe9i4peuv2.apps.googleusercontent.com";
+const GOOGLE_CLIENT_ID_WEB = process.env.GOOGLE_CLIENT_ID_WEB;
+const GOOGLE_AUDIENCES = [GOOGLE_CLIENT_ID_ANDROID, GOOGLE_CLIENT_ID_WEB].filter(Boolean);
+const googleClient = new OAuth2Client(); // no single client_id needed here anymore
 
 // NEW — separate credentials for Gmail inbox access (distinct from login)
 const { google } = require('googleapis');
@@ -337,9 +339,9 @@ app.post('/auth/google', loginLimiter, async (req, res) => {
   let payload;
   try {
     const ticket = await googleClient.verifyIdToken({
-      idToken,
-      audience: GOOGLE_CLIENT_ID,
-    });
+  idToken,
+  audience: GOOGLE_AUDIENCES,   // now accepts either client ID
+});
     payload = ticket.getPayload();
   } catch (err) {
     console.error("❌ GOOGLE TOKEN VERIFY ERROR:", err.message);
