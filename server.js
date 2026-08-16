@@ -166,7 +166,7 @@ app.use(helmet({
       connectSrc: [
         "'self'",
         process.env.CLIENT_URL,
-        "https://backend-vz58.onrender.com"
+        "https://backend-vz58.onrender.com",
         "https://backend-1-liqz.onrender.com",
         "https://accounts.google.com",
         "wss://chatflow-ai-o3e6.onrender.com",
