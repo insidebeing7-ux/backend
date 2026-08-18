@@ -215,25 +215,7 @@ const siteAiLimiter = rateLimit({
   handler: (req, res) => res.status(429).json({ message: "Too many requests. Try again shortly." })
 });
 
-// ================= TEXT-TO-SPEECH (AI Record → real voice message) =================
-app.post('/tts', requireAuth, aiLimiter, async (req, res) => {
-  const text = typeof req.body.text === "string" ? req.body.text.trim().slice(0, 200) : "";
-  if (!text) return res.status(400).json({ message: "Missing text" });
 
-  try {
-    const ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=en&q=${encodeURIComponent(text)}`;
-    const audioResp = await axios.get(ttsUrl, {
-      responseType: "arraybuffer",
-      headers: { "User-Agent": "Mozilla/5.0" },
-      timeout: 15000
-    });
-    const cloudResult = await uploadBufferToCloudinary(Buffer.from(audioResp.data), "audio/mpeg");
-    res.json({ ok: true, url: cloudResult.secure_url });
-  } catch (err) {
-    console.error("❌ TTS ERROR:", err.message);
-    res.status(500).json({ message: "TTS generation failed" });
-  }
-});
 
 // ================= SESSION =================
 const MySQLStore = require('express-mysql-session')(session);
@@ -564,7 +546,25 @@ app.get('/csrf-token', (req, res) => {
     res.status(500).json({ message: "CSRF token error" });
   }
 });
+// ================= TEXT-TO-SPEECH (AI Record → real voice message) =================
+app.post('/tts', requireAuth, aiLimiter, async (req, res) => {
+  const text = typeof req.body.text === "string" ? req.body.text.trim().slice(0, 200) : "";
+  if (!text) return res.status(400).json({ message: "Missing text" });
 
+  try {
+    const ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=en&q=${encodeURIComponent(text)}`;
+    const audioResp = await axios.get(ttsUrl, {
+      responseType: "arraybuffer",
+      headers: { "User-Agent": "Mozilla/5.0" },
+      timeout: 15000
+    });
+    const cloudResult = await uploadBufferToCloudinary(Buffer.from(audioResp.data), "audio/mpeg");
+    res.json({ ok: true, url: cloudResult.secure_url });
+  } catch (err) {
+    console.error("❌ TTS ERROR:", err.message);
+    res.status(500).json({ message: "TTS generation failed" });
+  }
+});
 app.post('/site-ai', siteAiLimiter, csrfProtection, async (req, res) => {
   const text = typeof req.body.text === "string" ? req.body.text.trim().slice(0, 300) : "";
   if (!text) return res.status(400).json({ message: "Missing text" });
