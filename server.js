@@ -975,6 +975,18 @@ app.post('/logout', requireAuth, (req, res) => {
   );
 });
 // ================= AI MODE =================
+// ================= AI MODE =================
+// NEW — GET counterpart to /set-ai-mode below. mode.js's window.aiMode.load()
+// calls this on chat open to restore the saved instructions into the
+// MODE textarea; without this route the request 404s and load() throws.
+app.get('/get-ai-mode', requireAuth, (req, res) => {
+  res.json({
+    instructions: req.session.aiMode || "",
+    length: req.session.aiModeLength || "Medium",
+    emoji: req.session.aiModeEmoji === true
+  });
+});
+
 app.post('/set-ai-mode', requireAuth, (req, res) => {
   let instructions = req.body.instructions || "";
   if (instructions.length > 300) return res.status(400).json({ message: "Mode too long" });
