@@ -144,6 +144,25 @@ function uploadBufferToCloudinary(buffer, mimetype) {
     stream.end(buffer);
   });
 }
+// ================= TEXT-TO-SPEECH (AI Record → real voice message) =================
+app.post('/tts', requireAuth, aiLimiter, async (req, res) => {
+  const text = typeof req.body.text === "string" ? req.body.text.trim().slice(0, 200) : "";
+  if (!text) return res.status(400).json({ message: "Missing text" });
+
+  try {
+    const ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=en&q=${encodeURIComponent(text)}`;
+    const audioResp = await axios.get(ttsUrl, {
+      responseType: "arraybuffer",
+      headers: { "User-Agent": "Mozilla/5.0" },
+      timeout: 15000
+    });
+    const cloudResult = await uploadBufferToCloudinary(Buffer.from(audioResp.data), "audio/mpeg");
+    res.json({ ok: true, url: cloudResult.secure_url });
+  } catch (err) {
+    console.error("❌ TTS ERROR:", err.message);
+    res.status(500).json({ message: "TTS generation failed" });
+  }
+});
 // ===== END MULTER SETUP =====
 
 const aiUserQuota = new Map();
