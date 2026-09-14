@@ -1002,10 +1002,10 @@ app.post('/logout', requireAuth, (req, res) => {
 // MODE textarea; without this route the request 404s and load() throws.
 app.get('/get-ai-mode', requireAuth, (req, res) => {
   res.json({
-    instructions: req.session.aiMode || "",
-    length: req.session.aiModeLength || "Medium",
-    emoji: req.session.aiModeEmoji === true
-  });
+  instructions: req.session.aiMode || "",
+  length: req.session.aiModeLength || "Medium",
+  useEmoji: req.session.aiModeEmoji === true
+});
 });
 
 app.post('/set-ai-mode', requireAuth, (req, res) => {
@@ -1017,7 +1017,7 @@ app.post('/set-ai-mode', requireAuth, (req, res) => {
   // free-text instructions, in the same session bag.
   const allowedLengths = ["Short", "Medium", "Long"];
   const length = allowedLengths.includes(req.body.length) ? req.body.length : "Medium";
-  const emoji = req.body.emoji === true;
+  const emoji = req.body.useEmoji === true;
 
  // CHANGED — keyed per user, not overwritten by other conversations/panels.
   // (Kept as a single slot since your client only ever has one Auto AI
