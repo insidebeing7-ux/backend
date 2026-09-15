@@ -2313,15 +2313,20 @@ async function callAIWithRetry(payload, retries = 3) {          // CHANGED — w
 io.on("connection", (socket) => {
   console.log("🔌 User connected:", socket.id);
 
-  socket.on("join", (userId) => {
+ socket.on("join", (userId) => {
     socket.userId = String(userId);
     socket.join(socket.userId);
+    console.log(`✅ socket ${socket.id} joined room ${socket.userId}`);
   });
 
   function getRoom(a, b) { return [a, b].sort().join("-"); }
 
   socket.on("call-user", (data) => {
-    if (!socket.userId) { socket.emit("call-rejected", { message: "Not authenticated" }); return; }
+    if (!socket.userId) {
+      console.warn("⚠️ call-user from UNJOINED socket", socket.id, "target:", data?.to);
+      socket.emit("call-rejected", { message: "Not authenticated" });
+      return;
+    } return; }
     if (!data.offer) { socket.emit("call-rejected", { message: "Missing offer" }); return; }
     const room = getRoom(socket.userId, String(data.to));
 
@@ -2352,7 +2357,10 @@ io.on("connection", (socket) => {
   });
 
   socket.on("end-call", (data) => {
-    if (!socket.userId) return;
+    if (!socket.userId) {
+      console.warn("⚠️ end-call from UNJOINED socket", socket.id, "target:", data?.to);
+      return;
+    }
     const room = getRoom(socket.userId, String(data.to));
     const current = activeCalls.get(room);
     if (current?.timer) clearTimeout(current.timer); // NEW: cancel pending missed-call timer
@@ -2360,8 +2368,11 @@ io.on("connection", (socket) => {
     io.to(String(data.to)).emit("call-ended");
   });
 
-  socket.on("answer-call", (data) => {
-    if (!socket.userId) return;
+socket.on("answer-call", (data) => {
+    if (!socket.userId) {
+      console.warn("⚠️ answer-call from UNJOINED socket", socket.id, "target:", data?.to);
+      return;
+    }
     console.log(`📞 answer-call: from=${socket.userId} to="${data.to}"`);
 
     // NEW: this is the critical fix — mark the call as answered and CANCEL
@@ -2380,19 +2391,25 @@ io.on("connection", (socket) => {
   });
 
   socket.on("ice-candidate", (data) => {
-    if (!socket.userId) return;
+    if (!socket.userId) {
+      console.warn("⚠️ ice-candidate from UNJOINED socket", socket.id, "target:", data?.to);
+      return;
+    }
     io.to(String(data.to)).emit("ice-candidate", { candidate: data.candidate });
-  });
+});
 
-  socket.on("decline-call", (data) => {
-    if (!socket.userId) return;
+socket.on("decline-call", (data) => {
+    if (!socket.userId) {
+      console.warn("⚠️ decline-call from UNJOINED socket", socket.id, "target:", data?.to, "— call-declined NEVER SENT to caller");
+      return;
+    }
     // NEW: clean up the timer on decline too
     const room = getRoom(socket.userId, String(data.to));
     const current = activeCalls.get(room);
     if (current?.timer) clearTimeout(current.timer);
     activeCalls.delete(room);
     io.to(String(data.to)).emit("call-declined");
-  });
+});
   socket.on("save-missed-call", (data) => {
     if (!socket.userId) return;
     const callerId = Number(data.caller_id);
