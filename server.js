@@ -2341,12 +2341,20 @@ io.on("connection", (socket) => {
     if (existing) { socket.emit("call-rejected", { message: "Call already active" }); return; }
 
     // NEW: store the timer handle (not just `true`) so it can be cancelled later
-    const missedTimer = setTimeout(() => {
+     const missedTimer = setTimeout(() => {
       const current = activeCalls.get(room);
       if (current && !current.answered) {
         activeCalls.delete(room);
         const callerId = String(socket.userId);
         const calleeId = callerId === room.split("-")[0] ? room.split("-")[1] : room.split("-")[0];
+        io.to(calleeId).emit("call-missed", { caller_id: callerId, callee_id: calleeId });
+        io.to(callerId).emit("call-missed", { caller_id: callerId, callee_id: calleeId });
+      }
+    }, 30 * 1000);
+
+    activeCalls.set(room, { answered: false, timer: missedTimer });
+    io.to(String(data.to)).emit("incoming-call", { from: socket.userId, offer: data.offer });
+  });
 
   socket.on("end-call", (data) => {
     if (!socket.userId) {
