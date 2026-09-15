@@ -2321,7 +2321,7 @@ io.on("connection", (socket) => {
 
   function getRoom(a, b) { return [a, b].sort().join("-"); }
 
-    socket.on("call-user", (data) => {
+      socket.on("call-user", (data) => {
     if (!socket.userId) {
       console.warn("⚠️ call-user from UNJOINED socket", socket.id, "target:", data?.to);
       socket.emit("call-rejected", { message: "Not authenticated" });
