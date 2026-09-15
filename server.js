@@ -2321,12 +2321,12 @@ io.on("connection", (socket) => {
 
   function getRoom(a, b) { return [a, b].sort().join("-"); }
 
-  socket.on("call-user", (data) => {
+   socket.on("call-user", (data) => {
     if (!socket.userId) {
       console.warn("⚠️ call-user from UNJOINED socket", socket.id, "target:", data?.to);
       socket.emit("call-rejected", { message: "Not authenticated" });
       return;
-    } return; }
+    }
     if (!data.offer) { socket.emit("call-rejected", { message: "Missing offer" }); return; }
     const room = getRoom(socket.userId, String(data.to));
 
@@ -2347,14 +2347,6 @@ io.on("connection", (socket) => {
         activeCalls.delete(room);
         const callerId = String(socket.userId);
         const calleeId = callerId === room.split("-")[0] ? room.split("-")[1] : room.split("-")[0];
-        io.to(calleeId).emit("call-missed", { caller_id: callerId, callee_id: calleeId });
-        io.to(callerId).emit("call-missed", { caller_id: callerId, callee_id: calleeId });
-      }
-    }, 30 * 1000);
-
-    activeCalls.set(room, { answered: false, timer: missedTimer });
-    io.to(String(data.to)).emit("incoming-call", { from: socket.userId, offer: data.offer });
-  });
 
   socket.on("end-call", (data) => {
     if (!socket.userId) {
