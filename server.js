@@ -1150,13 +1150,28 @@ if (safeMode === "chat") {
       return res.status(503).json({ message: "AI is starting up, please try again in 15 seconds.", waking: true });
     }
 
+        const estCost = estimateTokens(text) + estimateTokens(instructions) + 150; // + headroom for reply
+    const reservation = await reserveTokens(req.session.user.id, estCost);
+    if (!reservation.ok) {
+      return res.status(429).json({
+        message: "Daily AI token limit reached",
+        tokenLimitReached: true,
+        limit: reservation.limit,
+        used: reservation.used,
+        resetInSeconds: reservation.resetInSeconds
+      });
+    }
+
     const response = await callAIWithRetry({
       text,
       instructions,
       mode: safeMode,
       tone: safeTone   // NEW
     });
-    return res.json({ reply: response.data.reply });
+    return res.json({
+      reply: response.data.reply,
+      tokenQuota: { limit: reservation.limit, used: reservation.used, resetInSeconds: reservation.resetInSeconds }
+    });
   } catch (err) {
     console.error("AI REQUEST ERROR:", err.code, err?.response?.status);
     const isTimeout = err.code === "ECONNABORTED";
@@ -1823,7 +1838,62 @@ function gmailResultPage({ success, message }) {
     </html>
   `;
 }
+// ================= TOKEN QUOTA =================
+// Window is anchored server-side via MySQL NOW(); client can't manipulate it.
+function getOrResetQuota(userId) {
+  return new Promise((resolve, reject) => {
+    db.query(
+      `SELECT token_limit, tokens_used,
+              TIMESTAMPDIFF(SECOND, token_window_start, NOW()) AS age_seconds
+       FROM users WHERE id=?`,
+      [userId],
+      (err, result) => {
+        if (err) return reject(err);
+        if (result.length === 0) return reject(new Error("User not found"));
+        const row = result[0];
+        if (row.age_seconds >= 86400) {
+          db.query(
+            `UPDATE users SET tokens_used=0, token_window_start=NOW() WHERE id=?`,
+            [userId],
+            (resetErr) => {
+              if (resetErr) return reject(resetErr);
+              resolve({ limit: row.token_limit, used: 0, resetInSeconds: 86400 });
+            }
+          );
+        } else {
+          resolve({ limit: row.token_limit, used: row.tokens_used, resetInSeconds: 86400 - row.age_seconds });
+        }
+      }
+    );
+  });
+}
 
+// Atomically reserves `cost` tokens. Returns {ok:true, ...quota} or {ok:false, ...quota}.
+// The UPDATE's WHERE clause is the actual race guard — two concurrent requests
+// can't both succeed past the user's limit.
+async function reserveTokens(userId, cost) {
+  const quota = await getOrResetQuota(userId); // ensures window is fresh first
+  return new Promise((resolve, reject) => {
+    db.query(
+      `UPDATE users SET tokens_used = tokens_used + ?
+       WHERE id=? AND tokens_used + ? <= token_limit
+         AND TIMESTAMPDIFF(SECOND, token_window_start, NOW()) < 86400`,
+      [cost, userId, cost],
+      (err, result) => {
+        if (err) return reject(err);
+        if (result.affectedRows === 0) {
+          return resolve({ ok: false, limit: quota.limit, used: quota.used, resetInSeconds: quota.resetInSeconds });
+        }
+        resolve({ ok: true, limit: quota.limit, used: quota.used + cost, resetInSeconds: quota.resetInSeconds });
+      }
+    );
+  });
+}
+
+// Rough token estimate for a chunk of text — good enough for quota purposes.
+function estimateTokens(str) {
+  return Math.max(1, Math.ceil((str || "").length / 4));
+}
 // NEW — walks the Gmail MIME tree and returns { plain, html } bodies,
 // recursing into multipart/alternative and multipart/related containers.
 // This is what /gmail/message/:id and /gmail/thread/:id rely on, and it
@@ -1905,7 +1975,14 @@ function htmlToPlainText(html) {
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
-
+app.get('/token-quota', requireAuth, async (req, res) => {
+  try {
+    const quota = await getOrResetQuota(req.session.user.id);
+    res.json(quota);
+  } catch (err) {
+    res.status(500).json({ message: "Server error" });
+  }
+});
 app.get('/auth/gmail/callback', async (req, res) => {
   const code = req.query.code;
   const userId = Number(req.query.state);
