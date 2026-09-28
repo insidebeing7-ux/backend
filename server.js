@@ -1084,6 +1084,8 @@ app.post('/set-auto-ai', requireAuth, (req, res) => {
 // ================= AI REQUEST =================
 // ================= AI REQUEST =================
 app.post('/ai-request', aiLimiter, requireAuth, async (req, res) => {
+  let reservation = null;   // declared outside try so catch can see them
+  let estCost = 0;
   try {
    let { text, mode, instructions: bodyInstructions, tone } = req.body;
     if (typeof text !== "string") return res.status(400).json({ message: "Invalid input" });
@@ -1150,8 +1152,8 @@ if (safeMode === "chat") {
       return res.status(503).json({ message: "AI is starting up, please try again in 15 seconds.", waking: true });
     }
 
-        const estCost = estimateTokens(text) + estimateTokens(instructions) + 150; // + headroom for reply
-    const reservation = await reserveTokens(req.session.user.id, estCost);
+            estCost = estimateTokens(text) + estimateTokens(instructions) + 150; // + headroom for reply
+    reservation = await reserveTokens(req.session.user.id, estCost);
     if (!reservation.ok) {
       return res.status(429).json({
         message: "Daily AI token limit reached",
@@ -1172,11 +1174,11 @@ if (safeMode === "chat") {
       reply: response.data.reply,
       tokenQuota: { limit: reservation.limit, used: reservation.used, resetInSeconds: reservation.resetInSeconds }
     });
-  } catch (err) {
-  if (typeof reservation !== "undefined" && reservation?.ok) {
+   } catch (err) {
+  if (reservation && reservation.ok) {
     db.query("UPDATE users SET tokens_used = GREATEST(tokens_used - ?, 0) WHERE id=?",
              [estCost, req.session.user.id]);
-  }
+  }}
   console.error("AI REQUEST ERROR:", err.code, err?.response?.status);
     const isTimeout = err.code === "ECONNABORTED";
     const isDown = err.code === "ECONNREFUSED" || err.code === "ENOTFOUND";
@@ -1749,6 +1751,9 @@ try {
   if (lastErr) throw lastErr;
 } catch (aiErr) {
   console.warn("⚠️ PERSONAL ASSISTANT AI ERROR:", aiErr.code, aiErr.message);
+  const refund = estimateTokens(prompt) + historyTokens + 150;
+  db.query("UPDATE users SET tokens_used = GREATEST(tokens_used - ?, 0) WHERE id=?",
+           [refund, userId]);
   return res.status(503).json({
     message: "The assistant is waking up — try again in a few seconds.",
     waking: true
