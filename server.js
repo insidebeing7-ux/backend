@@ -1176,18 +1176,25 @@ if (safeMode === "chat") {
     });
       } catch (err) {
   if (reservation && reservation.ok) {
-    db.query("UPDATE users SET tokens_used = GREATEST(tokens_used - ?, 0) WHERE id=?",
-             [estCost, req.session.user.id]);
+    db.query(
+      "UPDATE users SET tokens_used = GREATEST(tokens_used - ?, 0) WHERE id=?",
+      [estCost, req.session.user.id],
+      (refundErr) => { if (refundErr) console.error("REFUND FAILED:", refundErr); }
+    );
   }
   console.error("AI REQUEST ERROR:", err.code, err?.response?.status);
-    const isTimeout = err.code === "ECONNABORTED";
-    const isDown = err.code === "ECONNREFUSED" || err.code === "ENOTFOUND";
-    return res.status(503).json({
-      message: isTimeout || isDown ? "AI is starting up, please try again in 15 seconds." : "AI error. Please try again.",
-      waking: isTimeout || isDown
-    });
+
+  const status = err?.response?.status;
+  if (status === 429) {
+    return res.status(429).json({ message: "⚠️ AI request limit reached. Try again shortly." });
   }
-});
+  const isTimeout = err.code === "ECONNABORTED";
+  const isDown = err.code === "ECONNREFUSED" || err.code === "ENOTFOUND";
+  return res.status(503).json({
+    message: isTimeout || isDown ? "AI is starting up, please try again in 15 seconds." : "AI error. Please try again.",
+    waking: isTimeout || isDown
+  });
+}
 
 // ================= GET AUTO AI =================
 // ================= VOICE SAMPLE STATUS =================
@@ -1751,7 +1758,8 @@ try {
   if (lastErr) throw lastErr;
 } catch (aiErr) {
   console.warn("⚠️ PERSONAL ASSISTANT AI ERROR:", aiErr.code, aiErr.message);
-  const refund = estimateTokens(prompt) + historyTokens + 150;
+  const refund = estimateTokens(prompt) + historyTokens + 150
+             + estimateTokens(question) + 50;   // also refund the base charge
   db.query("UPDATE users SET tokens_used = GREATEST(tokens_used - ?, 0) WHERE id=?",
            [refund, userId]);
   return res.status(503).json({
