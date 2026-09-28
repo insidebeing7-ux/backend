@@ -1266,6 +1266,23 @@ const assistantLimiter = rateLimit({
   handler: (req, res) => res.status(429).json({ message: "Too many assistant requests. Try again shortly." })
 });
 
+// NEW — reserves tokens for an assistant request. If the user is over their
+// daily limit, it sends the 429 itself and returns null (caller must just `return`).
+async function chargeAssistantTokens(req, res, cost) {
+  const r = await reserveTokens(req.session.user.id, cost);
+  if (!r.ok) {
+    res.status(429).json({
+      message: "Daily AI token limit reached",
+      tokenLimitReached: true,
+      limit: r.limit,
+      used: r.used,
+      resetInSeconds: r.resetInSeconds
+    });
+    return null;
+  }
+  return r;
+}
+
 // Resolves a name mentioned in the user's question to one of THEIR OWN
 // contacts only (people they've actually exchanged messages with) —
 // never a global username lookup, so it can't be used to probe other users.
@@ -1453,9 +1470,14 @@ app.post('/personal-assistant', requireAuth, assistantLimiter, async (req, res) 
   const userId = req.session.user.id;
   const username = req.session.user.username;
   let question = typeof req.body.question === "string" ? req.body.question.trim().slice(0, 500) : "";
-  if (!question) return res.status(400).json({ message: "Missing question" });
+    if (!question) return res.status(400).json({ message: "Missing question" });
 
   try {
+    // NEW — every assistant request costs tokens, even ones resolved locally
+    const baseCharge = await chargeAssistantTokens(req, res, estimateTokens(question) + 50);
+    if (!baseCharge) return;
+    let lastQuota = baseCharge;
+
     const [conversations, unread] = await Promise.all([
       getOwnConversationsSummary(userId),
       getOwnUnreadSummary(userId)
@@ -1678,7 +1700,18 @@ app.post('/personal-assistant', requireAuth, assistantLimiter, async (req, res) 
     if (!Array.isArray(req.session.assistantHistory)) {
       req.session.assistantHistory = [];
     }
-    const rollingHistory = req.session.assistantHistory.slice(-10);
+        const rollingHistory = req.session.assistantHistory.slice(-10);
+
+    // NEW — the AI call sends the full context prompt + history, so charge for that
+    const historyTokens = rollingHistory.reduce((s, m) => s + estimateTokens(m.content), 0);
+    const aiCharge = await chargeAssistantTokens(
+      req, res,
+      estimateTokens(prompt) + historyTokens + 150   // + headroom for the reply
+    );
+    if (!aiCharge) return;
+    lastQuota = aiCharge;
+
+   // Kairos AI (Render free tier) sleeps after inactivity and can take
 
    // Kairos AI (Render free tier) sleeps after inactivity and can take
 // 30-50s+ to cold start. Ping /health first to wake the dyno, then
@@ -1725,7 +1758,10 @@ try {
     // NEW — if the AI proposed sending a message, pass that through as a
     // structured action. Nothing is sent yet — the client must show this
     // as a confirm/edit/send UI and call /personal-assistant/send itself.
-    const respBody = { reply };
+        const respBody = {
+      reply,
+      tokenQuota: { limit: lastQuota.limit, used: lastQuota.used, resetInSeconds: lastQuota.resetInSeconds }
+    };
     if (aiResponse.data?.action === "send_message" &&
         typeof aiResponse.data.target_username === "string" &&
         typeof aiResponse.data.draft === "string") {
