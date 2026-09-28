@@ -285,10 +285,22 @@ const db = mysql.createConnection({
   connectTimeout: 10000,
   ssl: { rejectUnauthorized: false }
 });
+const DAILY_TOKEN_LIMIT = 3000;
+
 db.connect(err => {
   if (err) { console.error('❌ MySQL connection error:', err); process.exit(1); }
-  console.log('✅ Connected to MySQL');
-});
+  console.log('✅ Connected to MySQL, DB:', process.env.DB_NAME);
+
+  // Sync every user's limit. tokens_used is NOT touched.
+  db.query(
+    "UPDATE users SET token_limit=? WHERE token_limit<>?",
+    [DAILY_TOKEN_LIMIT, DAILY_TOKEN_LIMIT],
+    (e, r) => {
+      if (e) return console.error("❌ token_limit sync failed:", e);
+      console.log(`✅ token_limit synced to ${DAILY_TOKEN_LIMIT} (${r.affectedRows} rows changed)`);
+    }
+  );
+});   // <-- closes db.connect
 
 db.on('error', (err) => {
   console.error('❌ MySQL runtime error:', err);
@@ -1190,11 +1202,12 @@ if (safeMode === "chat") {
   }
   const isTimeout = err.code === "ECONNABORTED";
   const isDown = err.code === "ECONNREFUSED" || err.code === "ENOTFOUND";
-  return res.status(503).json({
+    return res.status(503).json({
     message: isTimeout || isDown ? "AI is starting up, please try again in 15 seconds." : "AI error. Please try again.",
     waking: isTimeout || isDown
   });
 }
+});   // <-- add this line: closes app.post('/ai-request', ...)
 
 // ================= GET AUTO AI =================
 // ================= VOICE SAMPLE STATUS =================
