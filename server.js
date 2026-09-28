@@ -1173,7 +1173,11 @@ if (safeMode === "chat") {
       tokenQuota: { limit: reservation.limit, used: reservation.used, resetInSeconds: reservation.resetInSeconds }
     });
   } catch (err) {
-    console.error("AI REQUEST ERROR:", err.code, err?.response?.status);
+  if (typeof reservation !== "undefined" && reservation?.ok) {
+    db.query("UPDATE users SET tokens_used = GREATEST(tokens_used - ?, 0) WHERE id=?",
+             [estCost, req.session.user.id]);
+  }
+  console.error("AI REQUEST ERROR:", err.code, err?.response?.status);
     const isTimeout = err.code === "ECONNABORTED";
     const isDown = err.code === "ECONNREFUSED" || err.code === "ENOTFOUND";
     return res.status(503).json({
