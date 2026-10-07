@@ -234,7 +234,7 @@ const sessionStore = new MySQLStore({
   expiration: 86400000
 });
 
-app.use(session({
+const sessionMiddleware = session({
   key: 'chatapp.sid',
   secret: process.env.SESSION_SECRET,
   store: sessionStore,
@@ -247,7 +247,8 @@ app.use(session({
     path: "/",
     maxAge: 1000 * 60 * 60 * 24
   }
-}));
+});
+app.use(sessionMiddleware);
 
 const csrfProtection = csrf({ cookie: false });
 app.use(csrfProtection);
@@ -2399,12 +2400,24 @@ app.post('/gmail/send', requireAuth, async (req, res) => {
 const server = http.createServer(app);
 const { Server } = require("socket.io");
 const io = new Server(server, {
-  cors: { 
-    origin: [process.env.CLIENT_URL, "null", "*"],
-    credentials: true 
+  cors: {
+    origin: [process.env.CLIENT_URL].filter(Boolean),
+    credentials: true
   },
   transports: ["websocket", "polling"]
 });
+
+// Share the express session with Socket.IO (needs socket.io >= 4.6)
+io.engine.use(sessionMiddleware);
+
+// Reject any socket that has no logged-in session
+io.use((socket, next) => {
+  const user = socket.request.session?.user;
+  if (!user) return next(new Error("unauthorized"));
+  socket.userId = String(user.id);   // from the server session, not the client
+  next();
+});
+
 let activeCalls = new Map();
 
 async function keepAIAlive() {
@@ -2454,13 +2467,14 @@ async function callAIWithRetry(payload, retries = 3) {          // CHANGED — w
 }
 
 io.on("connection", (socket) => {
-  console.log("🔌 User connected:", socket.id);
+  console.log("🔌 User connected:", socket.id, "user", socket.userId);
 
- socket.on("join", (userId) => {
-    socket.userId = String(userId);
-    socket.join(socket.userId);
-    console.log(`✅ socket ${socket.id} joined room ${socket.userId}`);
-  });
+  // Join the user's own room automatically, based on the session
+  socket.join(socket.userId);
+
+  // Kept so existing clients that still emit "join" don't break;
+  // it now ignores the id the client sends.
+  socket.on("join", () => { socket.join(socket.userId); });
 
   function getRoom(a, b) { return [a, b].sort().join("-"); }
 
@@ -2554,10 +2568,12 @@ socket.on("decline-call", (data) => {
     io.to(String(data.to)).emit("call-declined");
 });
   socket.on("save-missed-call", (data) => {
-    if (!socket.userId) return;
-    const callerId = Number(data.caller_id);
-    const calleeId = Number(data.callee_id);
-    if (!Number.isInteger(callerId) || !Number.isInteger(calleeId)) return;
+   if (!socket.userId) return;
+const callerId = Number(data.caller_id);
+const calleeId = Number(data.callee_id);
+if (!Number.isInteger(callerId) || !Number.isInteger(calleeId)) return;
+// the logged-in user must be one of the two participants
+if (String(callerId) !== socket.userId && String(calleeId) !== socket.userId) return;
     db.query(
       "INSERT INTO messages (sender_id, receiver_id, content) VALUES (?,?,?)",
       [callerId, calleeId, "📵 Missed call"],
