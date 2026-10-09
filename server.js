@@ -277,39 +277,31 @@ app.get("/signup", (req, res) => {
 });
 
 // ================= MYSQL =================
-const db = mysql.createConnection({
+// ================= MYSQL =================
+const db = mysql.createPool({
   host: process.env.DB_HOST,
   port: process.env.DB_PORT,
   user: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
   database: process.env.DB_NAME,
   connectTimeout: 10000,
-  ssl: { rejectUnauthorized: false }
+  ssl: { rejectUnauthorized: false },
+  waitForConnections: true,
+  connectionLimit: 10,
+  enableKeepAlive: true,
+  keepAliveInitialDelay: 10000
 });
 const DAILY_TOKEN_LIMIT = 3000;
 
-db.connect(err => {
-  if (err) { console.error('❌ MySQL connection error:', err); process.exit(1); }
-  console.log('✅ Connected to MySQL, DB:', process.env.DB_NAME);
-
-  // Sync every user's limit. tokens_used is NOT touched.
-  db.query(
-    "UPDATE users SET token_limit=? WHERE token_limit<>?",
-    [DAILY_TOKEN_LIMIT, DAILY_TOKEN_LIMIT],
-    (e, r) => {
-      if (e) return console.error("❌ token_limit sync failed:", e);
-      console.log(`✅ token_limit synced to ${DAILY_TOKEN_LIMIT} (${r.affectedRows} rows changed)`);
-    }
-  );
-});   // <-- closes db.connect
-
-db.on('error', (err) => {
-  console.error('❌ MySQL runtime error:', err);
-  if (err.code === 'PROTOCOL_CONNECTION_LOST' || err.code === 'ECONNRESET') {
-    console.log('🔄 Reconnecting to MySQL...');
-    db.connect();
+// Sync every user's limit. tokens_used is NOT touched.
+db.query(
+  "UPDATE users SET token_limit=? WHERE token_limit<>?",
+  [DAILY_TOKEN_LIMIT, DAILY_TOKEN_LIMIT],
+  (e, r) => {
+    if (e) return console.error("❌ token_limit sync failed:", e);
+    console.log(`✅ token_limit synced to ${DAILY_TOKEN_LIMIT} (${r.affectedRows} rows changed)`);
   }
-});
+);
 
 // ================= REGISTER =================
 app.post('/register', authLimiter, csrfProtection, validateRegister, (req, res) => {
