@@ -697,8 +697,32 @@ app.post('/send', requireAuth, perUserRateLimit, (req, res) => {
  db.query("SELECT id FROM users WHERE id=?", [receiver_id], (err, result) => {
     if (err) return res.status(500).json({ message: "Server error" });
     if (result.length === 0) return res.status(404).json({ message: "Receiver does not exist" });
+
     db.query(
-      'INSERT INTO messages (sender_id, receiver_id, content) VALUES (?,?,?)',
+      `SELECT 1 FROM chat_settings WHERE blocked=1
+         AND ((user_id=? AND other_user_id=?) OR (user_id=? AND other_user_id=?)) LIMIT 1`,
+      [sender_id, receiver_id, receiver_id, sender_id],
+      (blkErr, blk) => {
+        if (blkErr) return res.status(500).json({ message: "Server error" });
+        // generic message, so the blocked person can't tell who blocked whom
+        if (blk.length > 0) return res.status(403).json({ message: "You can't message this user" });
+
+        db.query(
+          'INSERT INTO messages (sender_id, receiver_id, content) VALUES (?,?,?)',
+          [sender_id, receiver_id, content],
+          (err) => {
+            if (err) { console.error("❌ SEND ERROR:", err); return res.status(500).json({ message: 'Error sending message' }); }
+            io.to(String(receiver_id)).emit("new-message", {
+              sender_id,
+              sender_username: req.session.user.username,
+              preview: content.slice(0, 80)
+            });
+            res.json({ message: 'Sent' });
+          }
+        );
+      }
+    );
+});
       [sender_id, receiver_id, content],
       (err) => {
         if (err) { console.error("❌ SEND ERROR:", err); return res.status(500).json({ message: 'Error sending message' }); }
@@ -736,8 +760,7 @@ app.get('/messages', requireAuth, (req, res) => {
         deleted: !!m.deleted_for_everyone
       }));
       // NEW: opening this chat means these are now read
-      db.query(
-        `UPDATE messages SET is_read=1 WHERE sender_id=? AND receiver_id=? AND is_read=0`,
+            db.query(`UPDATE chat_settings SET marked_unread=0 WHERE user_id=? AND other_user_id=?`, [userId, receiver_id]);
         [receiver_id, userId],
         (readErr) => {
           if (!readErr) io.to(String(userId)).emit("messages-read", { sender_id: receiver_id });
@@ -945,26 +968,73 @@ app.post('/ai-send', aiLimiter, requireAuth, perUserRateLimit, async (req, res) 
 app.get('/conversations', requireAuth, (req, res) => {
   const userId = req.session.user.id;
   db.query(
-    `SELECT m.*, u.username AS other_username
-     FROM messages m
-     INNER JOIN (
-       SELECT
-         CASE WHEN sender_id = ? THEN receiver_id ELSE sender_id END AS other_user,
-         MAX(id) AS last_id
-       FROM messages
-       WHERE sender_id = ? OR receiver_id = ?
-       GROUP BY other_user
-     ) latest ON m.id = latest.last_id
-     JOIN users u ON u.id = latest.other_user
-     ORDER BY m.id DESC`,
-    [userId, userId, userId],
+  `SELECT m.*, u.username AS other_username,
+          latest.other_user AS other_user_id,
+          COALESCE(cs.pinned,0)        AS pinned,
+          COALESCE(cs.archived,0)      AS archived,
+          COALESCE(cs.muted,0)         AS muted,
+          COALESCE(cs.marked_unread,0) AS marked_unread,
+          COALESCE(cs.blocked,0)       AS blocked
+   FROM messages m
+   INNER JOIN (
+     SELECT
+       CASE WHEN sender_id = ? THEN receiver_id ELSE sender_id END AS other_user,
+       MAX(id) AS last_id
+     FROM messages
+     WHERE (sender_id = ?   AND deleted_for_sender = 0)
+        OR (receiver_id = ? AND deleted_for_receiver = 0)
+     GROUP BY other_user
+   ) latest ON m.id = latest.last_id
+   JOIN users u ON u.id = latest.other_user
+   LEFT JOIN chat_settings cs
+          ON cs.user_id = ? AND cs.other_user_id = latest.other_user
+   ORDER BY pinned DESC, m.id DESC`,
+  [userId, userId, userId, userId],
     (err, result) => {
       if (err) { console.error("❌ CONVERSATION ERROR:", err); return res.status(500).json({ message: "DB error" }); }
       res.json(result);
     }
   );
 });
+// ================= CHAT SETTINGS (long-press menu) =================
+const CHAT_SETTING_FIELDS = ["pinned", "archived", "muted", "marked_unread", "blocked"];
 
+app.post('/chat-setting', requireAuth, (req, res) => {
+  const userId = req.session.user.id;
+  const other = Number(req.body.other_user_id);
+  const field = req.body.field;
+  const value = req.body.value === true ? 1 : 0;
+
+  // whitelist: the column name is never taken from the client directly
+  if (!Number.isInteger(other) || other === userId || !CHAT_SETTING_FIELDS.includes(field)) {
+    return res.status(400).json({ message: "Invalid request" });
+  }
+
+  db.query(
+    `INSERT INTO chat_settings (user_id, other_user_id, ${field}) VALUES (?,?,?)
+     ON DUPLICATE KEY UPDATE ${field}=?`,
+    [userId, other, value, value],
+    (err) => {
+      if (err) { console.error("❌ CHAT SETTING ERROR:", err); return res.status(500).json({ message: "DB error" }); }
+      res.json({ ok: true, field, value: !!value });
+    }
+  );
+});
+
+// "Delete chat" = delete for ME only (reuses your existing deleted_for_* columns)
+app.post('/delete-conversation', requireAuth, (req, res) => {
+  const userId = req.session.user.id;
+  const other = Number(req.body.other_user_id);
+  if (!Number.isInteger(other) || other === userId) return res.status(400).json({ message: "Invalid request" });
+
+  db.query(`UPDATE messages SET deleted_for_sender=1 WHERE sender_id=? AND receiver_id=?`, [userId, other], (e1) => {
+    if (e1) return res.status(500).json({ message: "DB error" });
+    db.query(`UPDATE messages SET deleted_for_receiver=1 WHERE receiver_id=? AND sender_id=?`, [userId, other], (e2) => {
+      if (e2) return res.status(500).json({ message: "DB error" });
+      res.json({ ok: true });
+    });
+  });
+});
 // ================= GET USER BY ID =================
 app.get('/user-by-id/:id', requireAuth, (req, res) => {
   const { id } = req.params;
