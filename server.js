@@ -707,7 +707,7 @@ app.post('/send', requireAuth, perUserRateLimit, (req, res) => {
         // generic message, so the blocked person can't tell who blocked whom
         if (blk.length > 0) return res.status(403).json({ message: "You can't message this user" });
 
-        db.query(
+              db.query(
           'INSERT INTO messages (sender_id, receiver_id, content) VALUES (?,?,?)',
           [sender_id, receiver_id, content],
           (err) => {
@@ -724,47 +724,8 @@ app.post('/send', requireAuth, perUserRateLimit, (req, res) => {
     );
   });
 });
-    if (err) return res.status(500).json({ message: "Server error" });
-    if (result.length === 0) return res.status(404).json({ message: "Receiver does not exist" });
 
-    db.query(
-      `SELECT 1 FROM chat_settings WHERE blocked=1
-         AND ((user_id=? AND other_user_id=?) OR (user_id=? AND other_user_id=?)) LIMIT 1`,
-      [sender_id, receiver_id, receiver_id, sender_id],
-      (blkErr, blk) => {
-        if (blkErr) return res.status(500).json({ message: "Server error" });
-        // generic message, so the blocked person can't tell who blocked whom
-        if (blk.length > 0) return res.status(403).json({ message: "You can't message this user" });
-
-        db.query(
-          'INSERT INTO messages (sender_id, receiver_id, content) VALUES (?,?,?)',
-          [sender_id, receiver_id, content],
-          (err) => {
-            if (err) { console.error("❌ SEND ERROR:", err); return res.status(500).json({ message: 'Error sending message' }); }
-            io.to(String(receiver_id)).emit("new-message", {
-              sender_id,
-              sender_username: req.session.user.username,
-              preview: content.slice(0, 80)
-            });
-            res.json({ message: 'Sent' });
-          }
-        );
-      }
-    );
-});
-      [sender_id, receiver_id, content],
-      (err) => {
-        if (err) { console.error("❌ SEND ERROR:", err); return res.status(500).json({ message: 'Error sending message' }); }
-        io.to(String(receiver_id)).emit("new-message", {
-          sender_id,
-          sender_username: req.session.user.username,
-          preview: content.slice(0, 80)
-        });
-        res.json({ message: 'Sent' });
-      }
-    );
-  });
-});
+// ================= GET MESSAGES =================
 
 // ================= GET MESSAGES =================
 app.get('/messages', requireAuth, (req, res) => {
