@@ -998,12 +998,30 @@ app.post('/chat-setting', requireAuth, (req, res) => {
     `INSERT INTO chat_settings (user_id, other_user_id, ${field}) VALUES (?,?,?)
      ON DUPLICATE KEY UPDATE ${field}=?`,
     [userId, other, value, value],
-    (err) => {
+        (err) => {
       if (err) { console.error("❌ CHAT SETTING ERROR:", err); return res.status(500).json({ message: "DB error" }); }
       res.json({ ok: true, field, value: !!value });
     }
   );
 });
+
+// ================= BLOCKED USERS LIST =================   ← NEW (start)
+app.get('/blocked-users', requireAuth, (req, res) => {
+  const userId = req.session.user.id;
+  db.query(
+    `SELECT u.id, u.username
+     FROM chat_settings cs
+     JOIN users u ON u.id = cs.other_user_id
+     WHERE cs.user_id = ? AND cs.blocked = 1
+     ORDER BY u.username ASC`,
+    [userId],
+    (err, result) => {
+      if (err) { console.error("❌ BLOCKED LIST ERROR:", err); return res.status(500).json({ message: "DB error" }); }
+      res.json(result);
+    }
+  );
+});
+// ================= END BLOCKED USERS LIST =================   ← NEW (end)
 
 // "Delete chat" = delete for ME only (reuses your existing deleted_for_* columns)
 app.post('/delete-conversation', requireAuth, (req, res) => {
