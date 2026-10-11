@@ -1742,11 +1742,12 @@ app.post('/personal-assistant', requireAuth, assistantLimiter, async (req, res) 
       { role: "user", content: question },
       { role: "assistant", content: replyText }
     ].slice(-10);
-    return res.json({
+        return res.json({
       reply: replyText,
       action: "send_message",
       targetUsername: exact.username,
       draft: draftText,
+      autoSend: true,   // NEW — client sends immediately, no confirm card
       tokenQuota: { limit: lastQuota.limit, used: lastQuota.used, resetInSeconds: lastQuota.resetInSeconds }
     });
   }
@@ -1816,11 +1817,12 @@ app.post('/personal-assistant', requireAuth, assistantLimiter, async (req, res) 
           { role: "assistant", content: replyText }
         ].slice(-10);
 
-        return res.json({
+             return res.json({
           reply: replyText,
           action: "send_message",
           targetUsername: chosen.username,
-          draft: pending.draft || ""
+          draft: pending.draft || "",
+          autoSend: !!pending.draft   // NEW — only auto-send if there is a real draft
         });
       }
       // not a recognized pick — fall through and let normal handling continue,
