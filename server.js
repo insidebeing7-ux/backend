@@ -844,6 +844,13 @@ app.post('/upload', requireAuth, upload.single("file"), async (req, res) => {
     if (err) return res.status(500).json({ message: "Server error" });
     if (result.length === 0) return res.status(404).json({ message: "Receiver does not exist" });
 
+    // NEW: same block check as /send
+    const blk = await new Promise(resolve => db.query(
+      `SELECT 1 FROM chat_settings WHERE blocked=1
+         AND ((user_id=? AND other_user_id=?) OR (user_id=? AND other_user_id=?)) LIMIT 1`,
+      [sender_id, receiver_id, receiver_id, sender_id], (e, r) => resolve(e ? [] : r)));
+    if (blk.length > 0) return res.status(403).json({ message: "You can't message this user" });
+
     let cloudResult;
    try {
       cloudResult = await uploadBufferToCloudinary(req.file.buffer, req.file.mimetype);
