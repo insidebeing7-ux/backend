@@ -1389,6 +1389,30 @@ async function chargeAssistantTokens(req, res, cost) {
   return r;
 }
 
+// NEW — turns "how is he" into "How are you?" (a message addressed TO the contact).
+// Falls back to simple capitalization/punctuation if the AI is unavailable or over quota.
+function basicTidy(text) {
+  let t = (text || "").trim();
+  if (!t) return t;
+  t = t.charAt(0).toUpperCase() + t.slice(1);
+  if (!/[.!?]$/.test(t) && /^(how|what|when|where|why|who|are|is|do|does|can|could|will|would|did)\b/i.test(t)) t += "?";
+  return t;
+}
+async function rewriteDraftForRecipient(userId, text) {
+  const cleaned = (text || "").trim();
+  if (!cleaned) return cleaned;
+  try {
+    const charge = await reserveTokens(userId, estimateTokens(cleaned) + 120);
+    if (!charge.ok) return basicTidy(cleaned);
+    const r = await callAIWithRetry({ text: cleaned, instructions: "", mode: "assistant_draft" }, 1);
+    const out = typeof r.data?.reply === "string" ? r.data.reply.trim().replace(/^["']|["']$/g, "") : "";
+    return out && out !== "..." ? out.slice(0, 1000) : basicTidy(cleaned);
+  } catch (e) {
+    console.warn("⚠️ assistant_draft failed:", e.code || e.message);
+    return basicTidy(cleaned);
+  }
+}
+
 // Resolves a name mentioned in the user's question to one of THEIR OWN
 // contacts only (people they've actually exchanged messages with) —
 // never a global username lookup, so it can't be used to probe other users.
@@ -1694,16 +1718,38 @@ app.post('/personal-assistant', requireAuth, assistantLimiter, async (req, res) 
   const combinedName = rawName + nameSuffix;            // e.g. "light123"
   let draftText = restWords.slice(consumed).join(" ");  // real message only, username words stripped
 
-  // NEW — "ask X ..." should produce a proper question, not a bare fragment.
+    // NEW — "ask X ..." should produce a proper question, not a bare fragment.
   // e.g. "ask light123 is it okay" -> draft "Is it okay?"
   const isAskVerb = /^ask\b/i.test(question.trim());
   if (isAskVerb && draftText && !/[?]\s*$/.test(draftText)) {
     draftText = draftText.charAt(0).toUpperCase() + draftText.slice(1) + "?";
   }
 
+  // NEW — rewrite into a proper message addressed to the contact
+  if (draftText) draftText = await rewriteDraftForRecipient(userId, draftText);
+
   const exact =
     (await resolveOwnContactByName(userId, combinedName)) ||
     (await resolveOwnContactByName(userId, rawName));
+
+  // NEW — exact contact + real message: skip the second AI call and queue the confirm card directly
+  if (exact && draftText) {
+    req.session.lastDraft = draftText;
+    const replyText = `Ready to send to ${exact.username}:`;
+    if (!Array.isArray(req.session.assistantHistory)) req.session.assistantHistory = [];
+    req.session.assistantHistory = [
+      ...req.session.assistantHistory,
+      { role: "user", content: question },
+      { role: "assistant", content: replyText }
+    ].slice(-10);
+    return res.json({
+      reply: replyText,
+      action: "send_message",
+      targetUsername: exact.username,
+      draft: draftText,
+      tokenQuota: { limit: lastQuota.limit, used: lastQuota.used, resetInSeconds: lastQuota.resetInSeconds }
+    });
+  }
 
   if (!exact) {
     // search ONLY against the resolved candidate name — never the raw sentence
