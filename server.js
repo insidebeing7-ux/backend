@@ -371,7 +371,7 @@ app.post('/auth/google', loginLimiter, async (req, res) => {
     // finishLogin now also reports agreed_terms so the client knows
     // whether to show the Terms dialog — for BOTH new and existing users
     const finishLogin = (user, isNewUser = false) => {
-  db.query(`DELETE FROM sessions WHERE data LIKE ?`, [`%"id":${user.id}%`], () => {
+  db.query(`DELETE FROM sessions WHERE data LIKE ?`, [`%"user":{"id":${user.id},%`], () => {
     req.session.user = { id: user.id, username: user.username, email: user.email || null };
     req.session.save((err) => {
       if (err) return res.status(500).json({ message: "Session error" });
@@ -509,9 +509,9 @@ app.post('/login', loginLimiter,  (req, res) => {
     }
     bcrypt.compare(password, user.password, (err, isMatch) => {
       if (!isMatch) return res.status(401).json({ message: 'Invalid credentials' });
-      db.query(
+            db.query(
         `DELETE FROM sessions WHERE data LIKE ?`,
-        [`%"id":${user.id}%`],
+        [`%"user":{"id":${user.id},%`],
         (deleteErr) => {
           if (deleteErr) console.warn("⚠️ Could not clear old sessions:", deleteErr);
           req.session.user = { id: user.id, username: user.username };
@@ -1061,9 +1061,9 @@ app.post('/logout', requireAuth, (req, res) => {
   // context from a previous session.
   req.session.assistantHistory = [];
   req.session.lastDraft = null;   // NEW — don't leak the last drafted message across sessions
-  db.query(
+   db.query(
     `DELETE FROM sessions WHERE data LIKE ?`,
-    [`%"id":${userId}%`],
+    [`%"user":{"id":${userId},%`],
     (err) => {
       // Always destroy THIS request's in-memory session too — otherwise
       // express-session can resave/touch it after the handler returns and
