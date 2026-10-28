@@ -266,8 +266,7 @@ app.get("/app/messaging.html", requireAuth, (req, res) => {
 // publicly (it's the same ID already in the Android app's strings.xml).
 app.get('/config.js', (req, res) => {
   res.type('application/javascript');
-  res.send(`window.GOOGLE_CLIENT_ID = ${JSON.stringify(GOOGLE_CLIENT_ID)};`);
-});
+  res.send(`window.GOOGLE_CLIENT_ID = ${JSON.stringify(GOOGLE_CLIENT_ID_WEB || "")};`);});
 
 app.use(express.static(path.join(__dirname, "public")));
 
@@ -669,7 +668,7 @@ app.post('/send', requireAuth, perUserRateLimit, (req, res) => {
   let { receiver_id, content } = req.body;
   const receiverId = Number(receiver_id);
   if (!Number.isInteger(receiverId)) return res.status(400).json({ message: "Invalid receiver_id" });
-  if (receiver_id === sender_id) return res.status(400).json({ message: "Cannot message yourself" });
+    if (receiverId === sender_id) return res.status(400).json({ message: "Cannot message yourself" });
 
   const now = Date.now();
   if (!aiQuota[sender_id]) aiQuota[sender_id] = [];
@@ -2546,7 +2545,7 @@ io.use((socket, next) => {
 });
 
 let activeCalls = new Map();
-
+const recentCallLogs = new Map();   // NEW — dedupe for save-call-log
 async function keepAIAlive() {
   try {
     const url = process.env.AI_URL + "/health";
@@ -2718,8 +2717,18 @@ socket.on("save-call-log", (data) => {
     const callerId = Number(data.caller_id);
     const calleeId = Number(data.callee_id);
     const status = data.status; // "completed" | "missed" | "declined"
-    const duration = Number(data.duration) || 0;
+    const duration = Math.min(Math.max(Number(data.duration) || 0, 0), 86400);
     if (!Number.isInteger(callerId) || !Number.isInteger(calleeId)) return;
+    if (!["completed", "missed", "declined"].includes(status)) return;
+    // the logged-in user must be one of the two participants
+    if (String(callerId) !== socket.userId && String(calleeId) !== socket.userId) return;
+
+    // dedupe: caller AND callee both report the same call
+    const key = `${callerId}-${calleeId}-${status}`;
+    const now = Date.now();
+    if (recentCallLogs.get(key) && now - recentCallLogs.get(key) < 15000) return;
+    recentCallLogs.set(key, now);
+    for (const [k, t] of recentCallLogs) if (now - t > 60000) recentCallLogs.delete(k);
 
     let content;
     if (status === "missed") content = "📵 Missed call";
