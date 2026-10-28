@@ -2530,7 +2530,9 @@ const io = new Server(server, {
     origin: [process.env.CLIENT_URL].filter(Boolean),
     credentials: true
   },
-  transports: ["websocket", "polling"]
+  transports: ["websocket", "polling"],
+  pingInterval: 8000,   // NEW
+  pingTimeout: 6000     // NEW
 });
 
 // Share the express session with Socket.IO (needs socket.io >= 4.6)
@@ -2604,27 +2606,32 @@ io.on("connection", (socket) => {
 
   function getRoom(a, b) { return [a, b].sort().join("-"); }
 
-      socket.on("call-user", (data) => {
+        socket.on("call-user", (data, ack) => {
     if (!socket.userId) {
-      console.warn("⚠️ call-user from UNJOINED socket", socket.id, "target:", data?.to);
       socket.emit("call-rejected", { message: "Not authenticated" });
       return;
     }
-    if (!data.offer) { socket.emit("call-rejected", { message: "Missing offer" }); return; }
-    const room = getRoom(socket.userId, String(data.to));
-
-    // NEW: if this is a RENEGOTIATION (ICE restart / m-line keepalive) on an
-    // already-active call, don't treat it as a brand new call attempt — just
-    // forward the offer and leave the existing activeCalls timer alone.
-    const existing = activeCalls.get(room);
-    if (existing && existing.answered) {
-      io.to(String(data.to)).emit("incoming-call", { from: socket.userId, offer: data.offer });
+    if (!data || !data.offer || data.to == null) {
+      socket.emit("call-rejected", { message: "Missing offer" });
       return;
     }
-    if (existing) { socket.emit("call-rejected", { message: "Call already active" }); return; }
+    const room = getRoom(socket.userId, String(data.to));
+    const existing = activeCalls.get(room);
 
-    // NEW: store the timer handle (not just `true`) so it can be cancelled later
-     const missedTimer = setTimeout(() => {
+    // Renegotiation (ICE restart) on a live call: just forward
+    if (data.renegotiate === true && existing && existing.answered) {
+      io.to(String(data.to)).emit("incoming-call", { from: socket.userId, offer: data.offer });
+      if (typeof ack === "function") ack({ ok: true });
+      return;
+    }
+
+    // NEW: anything else is a NEW call. Wipe any stale entry instead of rejecting.
+    if (existing) {
+      if (existing.timer) clearTimeout(existing.timer);
+      activeCalls.delete(room);
+    }
+
+    const missedTimer = setTimeout(() => {
       const current = activeCalls.get(room);
       if (current && !current.answered) {
         activeCalls.delete(room);
@@ -2637,6 +2644,7 @@ io.on("connection", (socket) => {
 
     activeCalls.set(room, { answered: false, timer: missedTimer });
     io.to(String(data.to)).emit("incoming-call", { from: socket.userId, offer: data.offer });
+    if (typeof ack === "function") ack({ ok: true });   // NEW: delivery confirmation
   });
 
   socket.on("end-call", (data) => {
@@ -2662,9 +2670,13 @@ socket.on("answer-call", (data) => {
     // the 30-second missed-call timer. Without this, every call gets force-
     // ended and marked "missed" exactly 30s after it started, even if it's
     // actively connected and working fine.
-    const room = getRoom(socket.userId, String(data.to));
+        const room = getRoom(socket.userId, String(data.to));
     const current = activeCalls.get(room);
-    if (current?.timer) {
+    if (!current) {                                   // NEW: call no longer exists
+      socket.emit("call-ended");
+      return;
+    }
+    if (current.timer) {
       clearTimeout(current.timer);
       activeCalls.set(room, { answered: true, timer: null });
       console.log(`✅ Call answered — cleared missed-call timeout for room ${room}`);
