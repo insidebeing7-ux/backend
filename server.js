@@ -2531,8 +2531,8 @@ const io = new Server(server, {
     credentials: true
   },
   transports: ["websocket", "polling"],
-  pingInterval: 8000,   // NEW
-  pingTimeout: 6000     // NEW
+    pingInterval: 20000,
+  pingTimeout: 30000
 });
 
 // Share the express session with Socket.IO (needs socket.io >= 4.6)
@@ -2767,11 +2767,27 @@ socket.on("save-call-log", (data) => {
     for (const [room] of activeCalls) {
       if (room.split("-").includes(socket.userId)) roomsToDelete.push(room);
     }
+    f    const uid = socket.userId;
     for (const room of roomsToDelete) {
       const current = activeCalls.get(room);
-      if (current?.timer) clearTimeout(current.timer); // NEW: cancel any pending timer
+      const otherId = room.split("-").find(p => p !== uid);
+
+      // An answered call survives a short network drop (45s) so the app can reconnect
+      if (current?.answered) {
+        if (current.graceTimer) continue;
+        current.graceTimer = setTimeout(() => {
+          const c = activeCalls.get(room);
+          if (!c) return;
+          const stillConnected = (io.sockets.adapter.rooms.get(uid)?.size || 0) > 0;
+          if (stillConnected) { c.graceTimer = null; return; }
+          activeCalls.delete(room);
+          if (otherId) io.to(otherId).emit("call-ended");
+        }, 45000);
+        continue;
+      }
+
+      if (current?.timer) clearTimeout(current.timer);
       activeCalls.delete(room);
-      const otherId = room.split("-").find(p => p !== socket.userId);
       if (otherId) io.to(otherId).emit("call-ended");
     }
   });
