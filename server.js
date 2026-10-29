@@ -2763,11 +2763,11 @@ socket.on("save-call-log", (data) => {
 });
   socket.on("disconnect", () => {
     console.log("❌ Disconnected:", socket.id);
-    const roomsToDelete = [];
+        const roomsToDelete = [];
     for (const [room] of activeCalls) {
       if (room.split("-").includes(socket.userId)) roomsToDelete.push(room);
     }
-    f    const uid = socket.userId;
+    const uid = socket.userId;
     for (const room of roomsToDelete) {
       const current = activeCalls.get(room);
       const otherId = room.split("-").find(p => p !== uid);
