@@ -2618,9 +2618,12 @@ io.on("connection", (socket) => {
     const room = getRoom(socket.userId, String(data.to));
     const existing = activeCalls.get(room);
 
-    // Renegotiation (ICE restart) on a live call: just forward
+        // Renegotiation (ICE restart) on a live call: just forward
     if (data.renegotiate === true && existing && existing.answered) {
-      io.to(String(data.to)).emit("incoming-call", { from: socket.userId, offer: data.offer });
+      // CHANGED — pass renegotiate:true through so the client doesn't have
+      // to GUESS whether this is a renegotiation or a brand-new call using
+      // its own local state (which can go stale and cause auto-answer).
+      io.to(String(data.to)).emit("incoming-call", { from: socket.userId, offer: data.offer, renegotiate: true });
       if (typeof ack === "function") ack({ ok: true });
       return;
     }
@@ -2628,6 +2631,7 @@ io.on("connection", (socket) => {
     // NEW: anything else is a NEW call. Wipe any stale entry instead of rejecting.
     if (existing) {
       if (existing.timer) clearTimeout(existing.timer);
+      if (existing.graceTimer) clearTimeout(existing.graceTimer);   // NEW — a leftover disconnect-grace timer from the PREVIOUS call must never be allowed to fire later and kill this brand-new call
       activeCalls.delete(room);
     }
 
@@ -2642,8 +2646,9 @@ io.on("connection", (socket) => {
       }
     }, 30 * 1000);
 
-    activeCalls.set(room, { answered: false, timer: missedTimer });
-    io.to(String(data.to)).emit("incoming-call", { from: socket.userId, offer: data.offer });
+        activeCalls.set(room, { answered: false, timer: missedTimer });
+    // CHANGED — explicit renegotiate:false so the client always has a clear signal
+    io.to(String(data.to)).emit("incoming-call", { from: socket.userId, offer: data.offer, renegotiate: false });
     if (typeof ack === "function") ack({ ok: true });   // NEW: delivery confirmation
   });
 
