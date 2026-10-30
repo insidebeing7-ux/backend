@@ -2676,21 +2676,30 @@ socket.on("answer-call", (data) => {
       socket.emit("call-ended");
       return;
     }
+        const pendingForAnswerer = (current.pending && current.pending[socket.userId]) || [];   // NEW
     if (current.timer) {
       clearTimeout(current.timer);
       activeCalls.set(room, { answered: true, timer: null });
       console.log(`✅ Call answered — cleared missed-call timeout for room ${room}`);
     }
+    // NEW: replay the caller's early candidates to the answering device
+    pendingForAnswerer.forEach(c => socket.emit("ice-candidate", { candidate: c }));
 
     io.to(String(data.to)).emit("call-answered", { answer: data.answer });
   });
 
   socket.on("ice-candidate", (data) => {
-    if (!socket.userId) {
-      console.warn("⚠️ ice-candidate from UNJOINED socket", socket.id, "target:", data?.to);
-      return;
+    if (!socket.userId || !data || data.to == null) return;
+    const to = String(data.to);
+    const room = getRoom(socket.userId, to);
+    const current = activeCalls.get(room);
+    // NEW: remember candidates for a callee who hasn't answered yet
+    if (current && !current.answered) {
+      if (!current.pending) current.pending = {};
+      if (!current.pending[to]) current.pending[to] = [];
+      if (current.pending[to].length < 60) current.pending[to].push(data.candidate);
     }
-    io.to(String(data.to)).emit("ice-candidate", { candidate: data.candidate });
+    io.to(to).emit("ice-candidate", { candidate: data.candidate });
 });
 
 socket.on("decline-call", (data) => {
