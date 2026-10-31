@@ -2598,8 +2598,15 @@ async function callAIWithRetry(payload, retries = 3) {          // CHANGED — w
 io.on("connection", (socket) => {
   console.log("🔌 User connected:", socket.id, "user", socket.userId);
 
-  // Join the user's own room automatically, based on the session
+    // Join the user's own room automatically, based on the session
   socket.join(socket.userId);
+
+  // If someone is ringing this user right now, replay the offer to the new socket
+  for (const [, call] of activeCalls) {
+    if (!call.answered && call.offer && call.calleeId === socket.userId) {
+      socket.emit("incoming-call", { from: call.callerId, offer: call.offer, renegotiate: false });
+    }
+  }
 
   // Kept so existing clients that still emit "join" don't break;
   // it now ignores the id the client sends.
@@ -2647,7 +2654,13 @@ io.on("connection", (socket) => {
       }
     }, 30 * 1000);
 
-        activeCalls.set(room, { answered: false, timer: missedTimer });
+            activeCalls.set(room, {
+      answered: false,
+      timer: missedTimer,
+      callerId: String(socket.userId),
+      calleeId: String(data.to),
+      offer: data.offer
+    });
     // CHANGED — explicit renegotiate:false so the client always has a clear signal
     io.to(String(data.to)).emit("incoming-call", { from: socket.userId, offer: data.offer, renegotiate: false });
     if (typeof ack === "function") ack({ ok: true });   // NEW: delivery confirmation
