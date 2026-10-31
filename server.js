@@ -183,6 +183,7 @@ app.use(helmet({
   }
 }));
 const port = process.env.PORT || 3000;
+app.get('/health', (req, res) => res.send('ok'));   // NEW
 
 // ================= CORS =================
 app.use(cors({
