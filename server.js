@@ -2601,9 +2601,16 @@ io.on("connection", (socket) => {
     // Join the user's own room automatically, based on the session
   socket.join(socket.userId);
 
-  // If someone is ringing this user right now, replay the offer to the new socket
-  for (const [, call] of activeCalls) {
+   // If someone is ringing this user right now, replay the offer to the new socket
+  for (const [room, call] of activeCalls) {
     if (!call.answered && call.offer && call.calleeId === socket.userId) {
+      const ageMs = Date.now() - (call.createdAt || 0);
+      if (ageMs > 30 * 1000) {
+        // stale — caller already hung up/timed out while we were offline
+        if (call.timer) clearTimeout(call.timer);
+        activeCalls.delete(room);
+        continue;
+      }
       socket.emit("incoming-call", { from: call.callerId, offer: call.offer, renegotiate: false });
     }
   }
@@ -2654,12 +2661,13 @@ io.on("connection", (socket) => {
       }
     }, 30 * 1000);
 
-            activeCalls.set(room, {
+                        activeCalls.set(room, {
       answered: false,
       timer: missedTimer,
       callerId: String(socket.userId),
       calleeId: String(data.to),
-      offer: data.offer
+      offer: data.offer,
+      createdAt: Date.now()
     });
     // CHANGED — explicit renegotiate:false so the client always has a clear signal
     io.to(String(data.to)).emit("incoming-call", { from: socket.userId, offer: data.offer, renegotiate: false });
