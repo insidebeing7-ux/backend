@@ -1689,6 +1689,61 @@ app.post('/personal-assistant', requireAuth, assistantLimiter, async (req, res) 
       }
     }
 
+        // NEW — detect a "call <name>" intent. This is checked BEFORE sendMatch
+    // so phrases like "call sam" aren't swallowed by the send/text/message
+    // parser. We only resolve WHO to call here — the client decides HOW
+    // (call yourself vs. AI calls) and actually places the call; this route
+    // never dials anyone itself.
+    const callMatch = question.match(
+      /^(?:please\s+)?call\s+([a-zA-Z0-9_.]{2,20})\b/i
+    );
+    if (callMatch) {
+      const rawName = callMatch[1];
+      const exact = await resolveOwnContactByName(userId, rawName);
+
+      if (exact) {
+        const replyText = `Want me to connect you with ${exact.username}?`;
+        if (!Array.isArray(req.session.assistantHistory)) req.session.assistantHistory = [];
+        req.session.assistantHistory = [
+          ...req.session.assistantHistory,
+          { role: "user", content: question },
+          { role: "assistant", content: replyText }
+        ].slice(-10);
+        return res.json({
+          reply: replyText,
+          action: "call_contact",
+          targetUsername: exact.username,
+          tokenQuota: { limit: lastQuota.limit, used: lastQuota.used, resetInSeconds: lastQuota.resetInSeconds }
+        });
+      }
+
+      // no exact match — offer the closest candidates, same pattern as sendMatch
+      const candidates = await findClosestOwnContacts(userId, rawName, 3);
+      if (candidates.length > 0) {
+        const replyText = `I couldn't find an exact match for "${rawName}". Tap a name below, or say/type its number to call them.`;
+        req.session.pendingContactChoice = {
+          candidates: candidates.map(c => ({ id: c.id, username: c.username })),
+          draft: "",
+          createdAt: Date.now(),
+          intent: "call"   // NEW — tells the pending-choice resolver below to return call_contact, not send_message
+        };
+        if (!Array.isArray(req.session.assistantHistory)) req.session.assistantHistory = [];
+        req.session.assistantHistory = [
+          ...req.session.assistantHistory,
+          { role: "user", content: question },
+          { role: "assistant", content: replyText }
+        ].slice(-10);
+        return res.json({
+          reply: replyText,
+          action: "choose_contact",
+          candidates: candidates.map((c, i) => ({ index: i + 1, username: c.username }))
+        });
+      }
+
+      const replyText = `I don't see anyone named "${rawName}" in your conversations.`;
+      return res.json({ reply: replyText });
+    }
+
     // NEW — detect a send/tell intent with a NAME that doesn't exactly match
     // any contact. Instead of letting the AI guess or fail, resolve the
     // closest candidates ourselves and return them as clickable options.
@@ -1802,8 +1857,25 @@ app.post('/personal-assistant', requireAuth, assistantLimiter, async (req, res) 
           c => c.username.toLowerCase() === trimmed.toLowerCase()
         ) || null;
       }
-     if (chosen) {
+          if (chosen) {
         req.session.pendingContactChoice = null;
+
+        // NEW — a "call X" intent resolves to call_contact, never send_message
+        if (pending.intent === "call") {
+          const replyText = `Want me to connect you with ${chosen.username}?`;
+          if (!Array.isArray(req.session.assistantHistory)) req.session.assistantHistory = [];
+          req.session.assistantHistory = [
+            ...req.session.assistantHistory,
+            { role: "user", content: question },
+            { role: "assistant", content: replyText }
+          ].slice(-10);
+          return res.json({
+            reply: replyText,
+            action: "call_contact",
+            targetUsername: chosen.username
+          });
+        }
+
         const replyText = `Got it — ready to send to ${chosen.username}.`;
 
         // NEW — same reasoning: record this exchange before the early
