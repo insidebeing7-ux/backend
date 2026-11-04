@@ -1635,7 +1635,20 @@ app.post('/personal-assistant', requireAuth, assistantLimiter, async (req, res) 
     // NEW — every assistant request costs tokens, even ones resolved locally
     const baseCharge = await chargeAssistantTokens(req, res, estimateTokens(question) + 50);
     if (!baseCharge) return;
-    let lastQuota = baseCharge;
+        let lastQuota = baseCharge;
+
+    // NEW — every JSON reply from this route (answers, send/call/choose
+    // commands, errors) now carries the user's CURRENT quota from the DB.
+    const _json = res.json.bind(res);
+    res.json = (body) => {
+      getOrResetQuota(userId)
+        .then(q => _json({
+          ...body,
+          tokenQuota: { limit: q.limit, used: q.used, resetInSeconds: q.resetInSeconds }
+        }))
+        .catch(() => _json(body));
+      return res;
+    };
 
     const [conversations, unread] = await Promise.all([
       getOwnConversationsSummary(userId),
@@ -2011,17 +2024,16 @@ try {
   });
 }
 
-    const reply = typeof aiResponse.data?.reply === "string"
+        const reply = typeof aiResponse.data?.reply === "string"
       ? aiResponse.data.reply.slice(0, 2000)
       : "Sorry, I couldn't find an answer.";
 
-    // NEW — if the AI proposed sending a message, pass that through as a
-    // structured action. Nothing is sent yet — the client must show this
-    // as a confirm/edit/send UI and call /personal-assistant/send itself.
-        const respBody = {
-      reply,
-      tokenQuota: { limit: lastQuota.limit, used: lastQuota.used, resetInSeconds: lastQuota.resetInSeconds }
-    };
+    // NEW — settle the 150-token reply headroom against what the AI really produced.
+    // If aichat.py returns real usage (see note below) it is used, otherwise we estimate.
+    const realOut = Number(aiResponse.data?.usage?.completion_tokens) || estimateTokens(reply);
+    await adjustTokens(userId, realOut - 150);
+
+    const respBody = { reply };   // tokenQuota is attached automatically by the res.json wrapper
     if (aiResponse.data?.action === "send_message" &&
         typeof aiResponse.data.target_username === "string" &&
         typeof aiResponse.data.draft === "string") {
@@ -2190,6 +2202,18 @@ async function reserveTokens(userId, cost) {
 function estimateTokens(str) {
   return Math.max(1, Math.ceil((str || "").length / 4));
 }
+
+// NEW — adds (positive) or refunds (negative) tokens after the real usage is known
+function adjustTokens(userId, delta) {
+  return new Promise((resolve) => {
+    db.query(
+      "UPDATE users SET tokens_used = GREATEST(tokens_used + ?, 0) WHERE id=?",
+      [delta, userId],
+      () => resolve()
+    );
+  });
+}
+
 // NEW — walks the Gmail MIME tree and returns { plain, html } bodies,
 // recursing into multipart/alternative and multipart/related containers.
 // This is what /gmail/message/:id and /gmail/thread/:id rely on, and it
