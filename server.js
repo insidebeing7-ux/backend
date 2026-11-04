@@ -1446,11 +1446,40 @@ function normalizeSpokenDigits(text) {
     .toLowerCase()
     .split(/\s+/)
     .map(w => words[w] ?? w)
-    .join("")
+        .join("")
     .replace(/[^a-z0-9_.]/g, "");
 }
 
-// NEW — fetches ALL of this user's own contacts (their real, own message
+// NEW — "light" + ["one","two","three"] -> suffix "123" (voice usernames)
+function takeSpokenDigits(words) {
+  const map = { zero:"0", one:"1", two:"2", three:"3", four:"4",
+                five:"5", six:"6", seven:"7", eight:"8", nine:"9" };
+  let suffix = "", consumed = 0;
+  for (const w of words) {
+    const lower = w.toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (map[lower] !== undefined) { suffix += map[lower]; consumed++; }
+    else if (/^[0-9]+$/.test(lower)) { suffix += lower; consumed++; }
+    else break;
+  }
+  return { suffix, consumed };
+}
+
+// NEW — rewrites natural spoken phrasing into the "tell <name> <text>" form
+// that the existing sendMatch parser already understands.
+function normalizeSpokenSendPhrase(q) {
+  let s = (q || "").trim();
+  s = s.replace(/^hey\s+kairos[,\s]+/i, "");
+  s = s.replace(/^(?:(?:please|can\s+you|could\s+you|i\s+want\s+to|i'd\s+like\s+to)[,\s]+)+/i, "");
+  // "send a message to sam saying hi"
+  s = s.replace(/^(?:send|write|text|drop)\s+(?:a\s+|an\s+)?(?:message|text|msg|note)\s+to\s+/i, "tell ");
+  // "send sam a message saying hi"
+  s = s.replace(/^(?:send|write|text|drop)\s+([a-zA-Z0-9_.]{2,20})\s+(?:a\s+|an\s+)?(?:message|text|msg|note)\b[,:]?\s*/i, "tell $1 ");
+  // "tell sam saying hi" / "tell sam that says hi"
+  s = s.replace(/^(tell\s+[a-zA-Z0-9_.]{2,20})\s+(?:saying|that\s+says|and\s+say)\s+/i, "$1 ");
+  return s;
+}
+
+// NEW — fetches ALL of this user's own contacts
 // history only — same security scoping as before), then ranks them by
 // closeness to rawName using substring match first, then edit distance.
 // Returns up to `limit` candidates: [{id, username, score}]
@@ -1694,11 +1723,12 @@ app.post('/personal-assistant', requireAuth, assistantLimiter, async (req, res) 
     // parser. We only resolve WHO to call here — the client decides HOW
     // (call yourself vs. AI calls) and actually places the call; this route
     // never dials anyone itself.
-    const callMatch = question.match(
-      /^(?:please\s+)?call\s+([a-zA-Z0-9_.]{2,20})\b/i
+        const callMatch = question.match(
+      /^(?:(?:hey\s+kairos|please|can\s+you|could\s+you|i\s+want\s+to|i'd\s+like\s+to)[,\s]+)*(?:make\s+a\s+(?:phone\s+)?call\s+to|give\s+a\s+call\s+to|call|phone|ring|dial)\s+([a-zA-Z0-9_.]{2,20})\b(.*)$/i
     );
     if (callMatch) {
-      const rawName = callMatch[1];
+      const spokenRest = (callMatch[2] || "").trim().split(/\s+/).filter(Boolean);
+      const rawName = callMatch[1] + takeSpokenDigits(spokenRest).suffix;   // "light one two three" -> light123
       const exact = await resolveOwnContactByName(userId, rawName);
 
       if (exact) {
@@ -1749,7 +1779,7 @@ app.post('/personal-assistant', requireAuth, assistantLimiter, async (req, res) 
     // closest candidates ourselves and return them as clickable options.
     // Broadened to catch more natural phrasings: "say hi to X", "tell X ...",
     // "message X ...", "ping X", "let X know ...", etc.
-    const sendMatch = question.match(
+        const sendMatch = normalizeSpokenSendPhrase(question).match(
       /(?:tell|message|send|text|ping|ask|say\s+(?:hi|hello|hey)\s+to|let)\s+(?:to\s+)?([a-zA-Z0-9_.]{2,20})\b(?:[,:]?\s+(?:that\s+|know\s+|if\s+|whether\s+)?(.*))?/i
     );
     if (sendMatch) {
