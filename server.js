@@ -1256,15 +1256,21 @@ if (safeMode === "chat") {
       });
     }
 
-    const response = await callAIWithRetry({
+        const response = await callAIWithRetry({
       text,
       instructions,
       mode: safeMode,
-      tone: safeTone   // NEW
+      tone: safeTone
     });
+
+    // NEW — replace the estimate with the real token count from Groq
+    const realTotal = Number(response.data?.usage?.total_tokens);
+    if (realTotal > 0) await adjustTokens(req.session.user.id, realTotal - estCost);
+    const q = await getOrResetQuota(req.session.user.id);
+
     return res.json({
       reply: response.data.reply,
-      tokenQuota: { limit: reservation.limit, used: reservation.used, resetInSeconds: reservation.resetInSeconds }
+      tokenQuota: { limit: q.limit, used: q.used, resetInSeconds: q.resetInSeconds }
     });
       } catch (err) {
   if (reservation && reservation.ok) {
