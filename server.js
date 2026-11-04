@@ -1480,9 +1480,41 @@ function normalizeSpokenSendPhrase(q) {
   s = s.replace(/^(?:send|write|text|drop)\s+(?:a\s+|an\s+)?(?:message|text|msg|note)\s+to\s+/i, "tell ");
   // "send sam a message saying hi"
   s = s.replace(/^(?:send|write|text|drop)\s+([a-zA-Z0-9_.]{2,20})\s+(?:a\s+|an\s+)?(?:message|text|msg|note)\b[,:]?\s*/i, "tell $1 ");
+    // NEW — "say hello to the user name light one two three" -> "tell light one two three hello"
+  s = s.replace(
+    /^say\s+(hi|hello|hey)\s+to\s+(?:the\s+)?(?:(?:user|username|contact|person)\s+)?(?:(?:name|named|called)\s+)?([a-zA-Z0-9_.]{2,20})\b\s*(.*)$/i,
+    "tell $2 $3 $1"
+  ).replace(/\s+/g, " ").trim();
+  // NEW — drop filler words so "name" never ends up inside the draft:
+  // "send to the user name sam hello" -> "send sam hello"
+  s = s.replace(
+    /^(tell|message|send|text|ping|ask|let)\s+(?:to\s+)?(?:the\s+)?(?:(?:user|username|contact|person)\s+)?(?:(?:name|named|called)\s+)?/i,
+    "$1 "
+  );
   // "tell sam saying hi" / "tell sam that says hi"
   s = s.replace(/^(tell\s+[a-zA-Z0-9_.]{2,20})\s+(?:saying|that\s+says|and\s+say)\s+/i, "$1 ");
   return s;
+}
+
+// NEW — understands "1", "one", "number one", "the first one", "option 2",
+// or the username itself, when picking from the candidate list.
+function parseCandidatePick(text, candidates) {
+  const t = (text || "").toLowerCase().trim().replace(/[.!?,]/g, "");
+  const compact = t.replace(/[^a-z0-9]/g, "");
+  const byName = candidates.find(c =>
+    compact.includes(c.username.toLowerCase().replace(/[^a-z0-9]/g, "")));
+  if (byName) return byName;
+
+  const words = {
+    one: 1, won: 1, first: 1, "1st": 1,
+    two: 2, to: 2, too: 2, second: 2, "2nd": 2,
+    three: 3, tree: 3, third: 3, "3rd": 3
+  };
+  let n = null;
+  const m = t.match(/\b([1-9])\b/);
+  if (m) n = Number(m[1]);
+  else for (const w of t.split(/\s+/)) { if (words[w]) { n = words[w]; break; } }
+  return n ? (candidates[n - 1] || null) : null;
 }
 
 // NEW — fetches ALL of this user's own contacts
@@ -1653,8 +1685,47 @@ app.post('/personal-assistant', requireAuth, assistantLimiter, async (req, res) 
           tokenQuota: { limit: q.limit, used: q.used, resetInSeconds: q.resetInSeconds }
         }))
         .catch(() => _json(body));
-      return res;
+            return res;
     };
+
+    // NEW — a pending "choose contact" prompt is handled FIRST
+    const pendingEarly = req.session.pendingContactChoice;
+    if (pendingEarly && Date.now() - pendingEarly.createdAt < 5 * 60 * 1000) {
+      const wordCount = question.trim().split(/\s+/).length;
+      if (/\b(cancel|never ?mind|forget it)\b/i.test(question) && wordCount <= 4) {
+        req.session.pendingContactChoice = null;
+        return res.json({ reply: "Okay, cancelled." });
+      }
+      const chosen = wordCount <= 4 ? parseCandidatePick(question, pendingEarly.candidates) : null;
+      if (chosen) {
+        req.session.pendingContactChoice = null;
+        if (pendingEarly.intent === "call") {
+          return res.json({
+            reply: `Want me to connect you with ${chosen.username}?`,
+            action: "call_contact",
+            targetUsername: chosen.username
+          });
+        }
+        return res.json({
+          reply: `Got it — ready to send to ${chosen.username}.`,
+          action: "send_message",
+          targetUsername: chosen.username,
+          draft: pendingEarly.draft || "",
+          autoSend: !!pendingEarly.draft
+        });
+      }
+      const looksLikeNewCommand = wordCount > 4 ||
+        /^(tell|message|send|text|ping|ask|call|phone|ring|dial|say|let|hey kairos)\b/i.test(question.trim());
+      if (!looksLikeNewCommand) {
+        // not understood: ask again instead of calling the AI
+        return res.json({
+          reply: "Please pick a number from the list (1, 2 or 3), or say cancel.",
+          action: "choose_contact",
+          candidates: pendingEarly.candidates.map((c, i) => ({ index: i + 1, username: c.username }))
+        });
+      }
+      req.session.pendingContactChoice = null; // a new command replaces the old prompt
+    }
 
     const [conversations, unread] = await Promise.all([
       getOwnConversationsSummary(userId),
@@ -1829,8 +1900,14 @@ app.post('/personal-assistant', requireAuth, assistantLimiter, async (req, res) 
     draftText = draftText.charAt(0).toUpperCase() + draftText.slice(1) + "?";
   }
 
-  // NEW — rewrite into a proper message addressed to the contact
-  if (draftText) draftText = await rewriteDraftForRecipient(userId, draftText);
+    // NEW — a plain greeting is sent exactly as said, not rewritten
+  if (draftText) {
+    if (/^(hi|hello|hey|hey there|good (morning|evening|night))$/i.test(draftText.trim())) {
+      draftText = draftText.trim().charAt(0).toUpperCase() + draftText.trim().slice(1);
+    } else {
+      draftText = await rewriteDraftForRecipient(userId, draftText);
+    }
+  }
 
   const exact =
     (await resolveOwnContactByName(userId, combinedName)) ||
@@ -1891,65 +1968,6 @@ app.post('/personal-assistant', requireAuth, assistantLimiter, async (req, res) 
     }
   }
 }
-
-    // NEW — handle the user's follow-up pick, either "1"/"2"/"3" typed/said,
-    // or an exact username they typed/tapped from the candidate list.
-    const pending = req.session.pendingContactChoice;
-    if (pending && Date.now() - pending.createdAt < 5 * 60 * 1000) {
-      const trimmed = question.trim();
-      const numMatch = trimmed.match(/^([1-9])$/);
-      let chosen = null;
-      if (numMatch) {
-        chosen = pending.candidates[Number(numMatch[1]) - 1] || null;
-      } else {
-        chosen = pending.candidates.find(
-          c => c.username.toLowerCase() === trimmed.toLowerCase()
-        ) || null;
-      }
-          if (chosen) {
-        req.session.pendingContactChoice = null;
-
-        // NEW — a "call X" intent resolves to call_contact, never send_message
-        if (pending.intent === "call") {
-          const replyText = `Want me to connect you with ${chosen.username}?`;
-          if (!Array.isArray(req.session.assistantHistory)) req.session.assistantHistory = [];
-          req.session.assistantHistory = [
-            ...req.session.assistantHistory,
-            { role: "user", content: question },
-            { role: "assistant", content: replyText }
-          ].slice(-10);
-          return res.json({
-            reply: replyText,
-            action: "call_contact",
-            targetUsername: chosen.username
-          });
-        }
-
-        const replyText = `Got it — ready to send to ${chosen.username}.`;
-
-        // NEW — same reasoning: record this exchange before the early
-        // return, so the next AI call still has full conversational context.
-        if (!Array.isArray(req.session.assistantHistory)) {
-          req.session.assistantHistory = [];
-        }
-        req.session.assistantHistory = [
-          ...req.session.assistantHistory,
-          { role: "user", content: question },
-          { role: "assistant", content: replyText }
-        ].slice(-10);
-
-             return res.json({
-          reply: replyText,
-          action: "send_message",
-          targetUsername: chosen.username,
-          draft: pending.draft || "",
-          autoSend: !!pending.draft   // NEW — only auto-send if there is a real draft
-        });
-      }
-      // not a recognized pick — fall through and let normal handling continue,
-      // but clear stale pending state so it doesn't linger forever
-      req.session.pendingContactChoice = null;
-    }
 
     const conversationsSummary = conversations
       .map(c => `- ${c.other_username}: "${c.content}"`)
