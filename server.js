@@ -9,7 +9,7 @@ const mysql = require('mysql2');
 const bcrypt = require('bcryptjs');
 const cors = require('cors');
 const session = require('express-session');
-const axios = require('axios');
+const axios = require('axios');&
 const http = require("http");
 const csrf = require('csurf');
 const helmet = require("helmet");
@@ -1061,6 +1061,7 @@ app.post('/logout', requireAuth, (req, res) => {
   // context from a previous session.
   req.session.assistantHistory = [];
   req.session.lastDraft = null;   // NEW — don't leak the last drafted message across sessions
+  req.session.lastTarget = null;  // NEW
    db.query(
     `DELETE FROM sessions WHERE data LIKE ?`,
     [`%"user":{"id":${userId},%`],
@@ -1404,18 +1405,51 @@ function basicTidy(text) {
   if (!/[.!?]$/.test(t) && /^(how|what|when|where|why|who|are|is|do|does|can|could|will|would|did)\b/i.test(t)) t += "?";
   return t;
 }
-async function rewriteDraftForRecipient(userId, text) {
-  const cleaned = (text || "").trim();
+// NEW — tells the AI WHAT KIND of message to write (question vs statement)
+function buildDraftInstruction(verb, prefix, rest) {
+  const p = (prefix || "").trim();
+  const body = [p, rest].filter(Boolean).join(" ");
+  switch ((verb || "tell").toLowerCase()) {
+    case "ask": return `ASK the contact: ${body}`;
+    case "let": return `LET the contact KNOW: ${body}`;
+    default:
+      return /^(if|whether)\b/i.test(p) ? `ASK the contact: ${body}` : `TELL the contact: ${body}`;
+  }
+}
+
+// NEW — offline fallback: "he is ok" + ask  ->  "Are you ok?"
+function fallbackDraft(verb, prefix, rest) {
+  let t = (rest || "").trim()
+    .replace(/\b(he|she|they) is\b/gi, "you are")
+    .replace(/\b(he|she) was\b/gi, "you were")
+    .replace(/\b(he|she) has\b/gi, "you have")
+    .replace(/\b(his|her)\b/gi, "your")
+    .replace(/\b(him|them)\b/gi, "you");
+  if (verb === "ask" || /^(if|whether)/i.test(prefix || "")) {
+    t = t.replace(/^you are\b/i, "are you");
+    if (!/[?]$/.test(t)) t += "?";
+  }
+  return basicTidy(t);
+}
+
+async function rewriteDraftForRecipient(userId, { verb, prefix, rest }, history = []) {
+  const cleaned = (rest || "").trim();
   if (!cleaned) return cleaned;
+  const instruction = buildDraftInstruction(verb, prefix, cleaned);
   try {
-    const charge = await reserveTokens(userId, estimateTokens(cleaned) + 120);
-    if (!charge.ok) return basicTidy(cleaned);
-    const r = await callAIWithRetry({ text: cleaned, instructions: "", mode: "assistant_draft" }, 1);
+    const charge = await reserveTokens(userId, estimateTokens(instruction) + 120);
+    if (!charge.ok) return fallbackDraft(verb, prefix, cleaned);
+    const r = await callAIWithRetry({
+      text: instruction,
+      instructions: "",
+      mode: "assistant_draft",
+      history: history.slice(-4).map(h => ({ role: h.role, content: String(h.content).slice(0, 200) }))
+    }, 1);
     const out = typeof r.data?.reply === "string" ? r.data.reply.trim().replace(/^["']|["']$/g, "") : "";
-    return out && out !== "..." ? out.slice(0, 1000) : basicTidy(cleaned);
+    return out && out !== "..." ? out.slice(0, 1000) : fallbackDraft(verb, prefix, cleaned);
   } catch (e) {
     console.warn("⚠️ assistant_draft failed:", e.code || e.message);
-    return basicTidy(cleaned);
+    return fallbackDraft(verb, prefix, cleaned);
   }
 }
 
@@ -1656,7 +1690,8 @@ app.post('/personal-assistant/send', requireAuth, assistantLimiter, csrfProtecti
           // NEW — this is the ground truth of what was actually sent, so
           // it overwrites any earlier draft guess as the canonical "last
           // message" for future "send it again" requests.
-          req.session.lastDraft = content;
+                    req.session.lastDraft = content;
+          req.session.lastTarget = result[0].username;   // NEW
           res.json({ message: "Sent", receiver_id, receiver_username: result[0].username });
         }
       );
@@ -1699,9 +1734,9 @@ app.post('/personal-assistant', requireAuth, assistantLimiter, async (req, res) 
       const chosen = wordCount <= 4 ? parseCandidatePick(question, pendingEarly.candidates) : null;
       if (chosen) {
         req.session.pendingContactChoice = null;
-        if (pendingEarly.intent === "call") {
+                if (pendingEarly.intent === "call") {
           return res.json({
-            reply: `Want me to connect you with ${chosen.username}?`,
+            reply: `Calling ${chosen.username}…`,
             action: "call_contact",
             targetUsername: chosen.username
           });
@@ -1821,8 +1856,8 @@ app.post('/personal-assistant', requireAuth, assistantLimiter, async (req, res) 
       const rawName = callMatch[1] + takeSpokenDigits(spokenRest).suffix;   // "light one two three" -> light123
       const exact = await resolveOwnContactByName(userId, rawName);
 
-      if (exact) {
-        const replyText = `Want me to connect you with ${exact.username}?`;
+            if (exact) {
+        const replyText = `Calling ${exact.username}…`;
         if (!Array.isArray(req.session.assistantHistory)) req.session.assistantHistory = [];
         req.session.assistantHistory = [
           ...req.session.assistantHistory,
@@ -1869,12 +1904,25 @@ app.post('/personal-assistant', requireAuth, assistantLimiter, async (req, res) 
     // closest candidates ourselves and return them as clickable options.
     // Broadened to catch more natural phrasings: "say hi to X", "tell X ...",
     // "message X ...", "ping X", "let X know ...", etc.
-        const sendMatch = normalizeSpokenSendPhrase(question).match(
-      /(?:tell|message|send|text|ping|ask|say\s+(?:hi|hello|hey)\s+to|let)\s+(?:to\s+)?([a-zA-Z0-9_.]{2,20})\b(?:[,:]?\s+(?:that\s+|know\s+|if\s+|whether\s+)?(.*))?/i
+                const sendMatch = normalizeSpokenSendPhrase(question).match(
+      // groups: 1=verb  2=name  3=prefix(if/that/know/whether)  4=rest
+      /(tell|message|send|text|ping|ask|say\s+(?:hi|hello|hey)\s+to|let)\s+(?:to\s+)?([a-zA-Z0-9_.]{2,20})\b(?:[,:]?\s+(that\s+|know\s+|if\s+|whether\s+)?(.*))?/i
     );
     if (sendMatch) {
-  const rawName = sendMatch[1];
-  const restWords = (sendMatch[2] || "").trim().split(/\s+/).filter(Boolean);
+  const verb = sendMatch[1].toLowerCase().split(/\s+/)[0];
+  let rawName = sendMatch[2];
+  let prefix = sendMatch[3] || "";
+  const restWords = (sendMatch[4] || "").trim().split(/\s+/).filter(Boolean);
+
+  // NEW — "ask him if he is ok" / "ask if he is ok": no real name was given,
+  // so use the last person the user talked to (context from the conversation)
+  let lastTargetUsed = false;
+  const lowerName = rawName.toLowerCase();
+  if (["him", "her", "them", "if", "whether", "that"].includes(lowerName) && req.session.lastTarget) {
+    if (["if", "whether", "that"].includes(lowerName)) prefix = lowerName + " ";
+    rawName = req.session.lastTarget;
+    lastTargetUsed = true;
+  }
 
   // Consume leading spoken-digit words into the username itself
   // (e.g. "light" + "one two three" -> "light123"), since numeric
@@ -1884,28 +1932,36 @@ app.post('/personal-assistant', requireAuth, assistantLimiter, async (req, res) 
     five:"5", six:"6", seven:"7", eight:"8", nine:"9"
   };
   let nameSuffix = "", consumed = 0;
-  for (const w of restWords) {
-    const lower = w.toLowerCase().replace(/[^a-z0-9]/g, "");
-    if (digitWordMap[lower] !== undefined) { nameSuffix += digitWordMap[lower]; consumed++; }
-    else if (/^[0-9]+$/.test(lower)) { nameSuffix += lower; consumed++; }
-    else break;
+  if (!lastTargetUsed) {   // CHANGED — don't eat digits when the name came from context
+    for (const w of restWords) {
+      const lower = w.toLowerCase().replace(/[^a-z0-9]/g, "");
+      if (digitWordMap[lower] !== undefined) { nameSuffix += digitWordMap[lower]; consumed++; }
+      else if (/^[0-9]+$/.test(lower)) { nameSuffix += lower; consumed++; }
+      else break;
+    }
   }
   const combinedName = rawName + nameSuffix;            // e.g. "light123"
   let draftText = restWords.slice(consumed).join(" ");  // real message only, username words stripped
 
-    // NEW — "ask X ..." should produce a proper question, not a bare fragment.
-  // e.g. "ask light123 is it okay" -> draft "Is it okay?"
-  const isAskVerb = /^ask\b/i.test(question.trim());
-  if (isAskVerb && draftText && !/[?]\s*$/.test(draftText)) {
-    draftText = draftText.charAt(0).toUpperCase() + draftText.slice(1) + "?";
+  // NEW — "ask light one two three if he is ok": the "if" lands in draftText, move it to prefix
+  if (!prefix) {
+    const pm = draftText.match(/^(if|whether|that|know)\s+/i);
+    if (pm) { prefix = pm[1] + " "; draftText = draftText.slice(pm[0].length); }
   }
 
-    // NEW — a plain greeting is sent exactly as said, not rewritten
+  // REMOVED — the old "isAskVerb ... + '?'" block. The AI now decides
+  // whether the message is a question, because it is told the verb.
+
+    // a plain greeting is sent exactly as said, not rewritten
   if (draftText) {
     if (/^(hi|hello|hey|hey there|good (morning|evening|night))$/i.test(draftText.trim())) {
       draftText = draftText.trim().charAt(0).toUpperCase() + draftText.trim().slice(1);
     } else {
-      draftText = await rewriteDraftForRecipient(userId, draftText);
+      draftText = await rewriteDraftForRecipient(
+        userId,
+        { verb, prefix, rest: draftText },        // CHANGED — verb + prefix are passed now
+        req.session.assistantHistory || []        // NEW — conversation context
+      );
     }
   }
 
@@ -1913,9 +1969,10 @@ app.post('/personal-assistant', requireAuth, assistantLimiter, async (req, res) 
     (await resolveOwnContactByName(userId, combinedName)) ||
     (await resolveOwnContactByName(userId, rawName));
 
-  // NEW — exact contact + real message: skip the second AI call and queue the confirm card directly
+  // exact contact + real message: skip the second AI call and send directly
   if (exact && draftText) {
     req.session.lastDraft = draftText;
+    req.session.lastTarget = exact.username;   // NEW — remember who we talked to
     const replyText = `Ready to send to ${exact.username}:`;
     if (!Array.isArray(req.session.assistantHistory)) req.session.assistantHistory = [];
     req.session.assistantHistory = [
@@ -1928,7 +1985,7 @@ app.post('/personal-assistant', requireAuth, assistantLimiter, async (req, res) 
       action: "send_message",
       targetUsername: exact.username,
       draft: draftText,
-      autoSend: true,   // NEW — client sends immediately, no confirm card
+      autoSend: true,
       tokenQuota: { limit: lastQuota.limit, used: lastQuota.used, resetInSeconds: lastQuota.resetInSeconds }
     });
   }
