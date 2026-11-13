@@ -1519,6 +1519,9 @@ function normalizeSpokenSendPhrase(q) {
     /^say\s+(hi|hello|hey)\s+to\s+(?:the\s+)?(?:(?:user|username|contact|person)\s+)?(?:(?:name|named|called)\s+)?([a-zA-Z0-9_.]{2,20})\b\s*(.*)$/i,
     "tell $2 $3 $1"
   ).replace(/\s+/g, " ").trim();
+    // NEW — "say to sam hello" / "say to the user name sam hello" -> "tell sam hello"
+  s = s.replace(/^say\s+to\s+/i, "tell ");
+
   // NEW — drop filler words so "name" never ends up inside the draft:
   // "send to the user name sam hello" -> "send sam hello"
   s = s.replace(
@@ -1943,10 +1946,19 @@ app.post('/personal-assistant', requireAuth, assistantLimiter, async (req, res) 
   const combinedName = rawName + nameSuffix;            // e.g. "light123"
   let draftText = restWords.slice(consumed).join(" ");  // real message only, username words stripped
 
-  // NEW — "ask light one two three if he is ok": the "if" lands in draftText, move it to prefix
+    // NEW — "ask light one two three if he is ok": the "if" lands in draftText, move it to prefix
   if (!prefix) {
     const pm = draftText.match(/^(if|whether|that|know)\s+/i);
     if (pm) { prefix = pm[1] + " "; draftText = draftText.slice(pm[0].length); }
+  }
+
+  // NEW — never let the recipient's username leak into the message itself
+  {
+    const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const names = [combinedName, rawName].filter(Boolean).map(esc).join("|");
+    draftText = draftText
+      .replace(new RegExp(`^(?:to\\s+)?(?:${names})\\b[,:]?\\s*`, "i"), "")
+      .trim();
   }
 
   // REMOVED — the old "isAskVerb ... + '?'" block. The AI now decides
@@ -2118,9 +2130,15 @@ try {
     if (aiResponse.data?.action === "send_message" &&
         typeof aiResponse.data.target_username === "string" &&
         typeof aiResponse.data.draft === "string") {
-      respBody.action = "send_message";
+            respBody.action = "send_message";
       respBody.targetUsername = aiResponse.data.target_username.slice(0, 30);
-      respBody.draft = aiResponse.data.draft.slice(0, 1000);
+
+      // NEW — remove the username if the AI put it at the start of the draft
+      const tn = respBody.targetUsername.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      let cleanDraft = aiResponse.data.draft
+        .replace(new RegExp(`^(?:to\\s+)?${tn}\\b[,:]?\\s*`, "i"), "")
+        .trim();
+      respBody.draft = (cleanDraft || aiResponse.data.draft).slice(0, 1000);
 
       // NEW — remember this as the last drafted message, so a later
       // "send him the same thing again" doesn't require the AI to
