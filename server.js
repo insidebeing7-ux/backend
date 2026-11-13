@@ -1501,7 +1501,64 @@ function takeSpokenDigits(words) {
     else if (/^[0-9]+$/.test(lower)) { suffix += lower; consumed++; }
     else break;
   }
-  return { suffix, consumed };
+    return { suffix, consumed };
+}
+
+// NEW — all of THIS user's own contacts (same security scope as before)
+function getOwnContactList(userId) {
+  return new Promise((resolve, reject) => {
+    db.query(
+      `SELECT DISTINCT u.id, u.username
+       FROM messages m
+       JOIN users u ON u.id = CASE WHEN m.sender_id=? THEN m.receiver_id ELSE m.sender_id END
+       WHERE (m.sender_id=? OR m.receiver_id=?)`,
+      [userId, userId, userId],
+      (err, rows) => (err ? reject(err) : resolve(rows))
+    );
+  });
+}
+
+// NEW — decides where the NAME ends and the MESSAGE begins by checking
+// your real contacts. "inside being hello" -> name "insidebeing", rest "hello".
+// "light one two three hi" -> name "light123", rest "hi".
+// Returns null if nothing matches, so the old logic still runs as a fallback.
+async function resolveSpokenName(userId, words, maxWords = 6) {
+  const digitMap = { zero:"0", one:"1", two:"2", three:"3", four:"4",
+                     five:"5", six:"6", seven:"7", eight:"8", nine:"9" };
+  const norm = s => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const contacts = await getOwnContactList(userId);
+  if (!contacts.length || !words.length) return null;
+
+  const limit = Math.min(words.length, maxWords);
+  const joined = k =>
+    words.slice(0, k).map(w => digitMap[w.toLowerCase()] ?? w).join("");
+
+  // 1) exact match, longest name first ("inside being" beats "inside")
+  for (let k = limit; k >= 1; k--) {
+    const cand = norm(joined(k));
+    const hit = contacts.find(c => norm(c.username) === cand);
+    if (hit) {
+      return { name: hit.username, rawFirst: words[0],
+               rest: words.slice(k).join(" "), exact: true };
+    }
+  }
+
+  // 2) close match (speech-recognition typos)
+  let best = null;
+  for (let k = 1; k <= limit; k++) {
+    const cand = norm(joined(k));
+    if (cand.length < 3) continue;
+    for (const c of contacts) {
+      const d = levenshtein(norm(c.username), cand);
+      const maxD = Math.max(1, Math.floor(cand.length / 4));
+      if (d <= maxD && (!best || d < best.d)) best = { d, k, cand };
+    }
+  }
+  if (best) {
+    return { name: best.cand, rawFirst: words[0],
+             rest: words.slice(best.k).join(" "), exact: false };
+  }
+  return null;
 }
 
 // NEW — rewrites natural spoken phrasing into the "tell <name> <text>" form
@@ -1855,8 +1912,11 @@ app.post('/personal-assistant', requireAuth, assistantLimiter, async (req, res) 
       /^(?:(?:hey\s+kairos|please|can\s+you|could\s+you|i\s+want\s+to|i'd\s+like\s+to)[,\s]+)*(?:make\s+a\s+(?:phone\s+)?call\s+to|give\s+a\s+call\s+to|call|phone|ring|dial)\s+([a-zA-Z0-9_.]{2,20})\b(.*)$/i
     );
     if (callMatch) {
-      const spokenRest = (callMatch[2] || "").trim().split(/\s+/).filter(Boolean);
-      const rawName = callMatch[1] + takeSpokenDigits(spokenRest).suffix;   // "light one two three" -> light123
+            const spokenRest = (callMatch[2] || "").trim().split(/\s+/).filter(Boolean);
+      const resolvedCall = await resolveSpokenName(userId, [callMatch[1], ...spokenRest]);
+      const rawName = resolvedCall
+        ? resolvedCall.name
+        : callMatch[1] + takeSpokenDigits(spokenRest).suffix;   // old fallback
       const exact = await resolveOwnContactByName(userId, rawName);
 
             if (exact) {
@@ -1927,24 +1987,35 @@ app.post('/personal-assistant', requireAuth, assistantLimiter, async (req, res) 
     lastTargetUsed = true;
   }
 
-  // Consume leading spoken-digit words into the username itself
-  // (e.g. "light" + "one two three" -> "light123"), since numeric
-  // usernames often get spoken as separate words.
-  const digitWordMap = {
-    zero:"0", one:"1", two:"2", three:"3", four:"4",
-    five:"5", six:"6", seven:"7", eight:"8", nine:"9"
-  };
-  let nameSuffix = "", consumed = 0;
-  if (!lastTargetUsed) {   // CHANGED — don't eat digits when the name came from context
-    for (const w of restWords) {
-      const lower = w.toLowerCase().replace(/[^a-z0-9]/g, "");
-      if (digitWordMap[lower] !== undefined) { nameSuffix += digitWordMap[lower]; consumed++; }
-      else if (/^[0-9]+$/.test(lower)) { nameSuffix += lower; consumed++; }
-      else break;
+    // NEW — resolve the name against the user's REAL contacts, so multi-word
+  // spoken names ("inside being") are never split into name + message.
+  let combinedName, draftText;
+  const resolved = lastTargetUsed
+    ? null
+    : await resolveSpokenName(userId, [rawName, ...restWords]);
+
+  if (resolved) {
+    rawName = resolved.rawFirst;
+    combinedName = resolved.name;     // e.g. "insidebeing"
+    draftText = resolved.rest;        // e.g. "hello"
+  } else {
+    // old fallback: only spoken digits are merged into the name
+    const digitWordMap = {
+      zero:"0", one:"1", two:"2", three:"3", four:"4",
+      five:"5", six:"6", seven:"7", eight:"8", nine:"9"
+    };
+    let nameSuffix = "", consumed = 0;
+    if (!lastTargetUsed) {
+      for (const w of restWords) {
+        const lower = w.toLowerCase().replace(/[^a-z0-9]/g, "");
+        if (digitWordMap[lower] !== undefined) { nameSuffix += digitWordMap[lower]; consumed++; }
+        else if (/^[0-9]+$/.test(lower)) { nameSuffix += lower; consumed++; }
+        else break;
+      }
     }
+    combinedName = rawName + nameSuffix;
+    draftText = restWords.slice(consumed).join(" ");
   }
-  const combinedName = rawName + nameSuffix;            // e.g. "light123"
-  let draftText = restWords.slice(consumed).join(" ");  // real message only, username words stripped
 
     // NEW — "ask light one two three if he is ok": the "if" lands in draftText, move it to prefix
   if (!prefix) {
