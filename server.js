@@ -1772,7 +1772,7 @@ app.post('/personal-assistant/send', requireAuth, assistantLimiter, csrfProtecti
           // NEW — this is the ground truth of what was actually sent, so
           // it overwrites any earlier draft guess as the canonical "last
           // message" for future "send it again" requests.
-                    req.session.lastDraft = content;
+                              req.session.lastDraft = content;
           req.session.lastTarget = result[0].username;   // NEW
                     res.json({ message: "Sent", receiver_id, receiver_username: result[0].username, content });
         }
@@ -1780,6 +1780,34 @@ app.post('/personal-assistant/send', requireAuth, assistantLimiter, csrfProtecti
     }
   );
 });
+
+// NEW — turns raw message content into something the AI can understand,   // <-- NEW
+// and ALWAYS says who it came from.                                        // <-- NEW
+function describeMessageForAssistant(content, fromMe, otherName) {          // <-- NEW
+  const raw = (content || "").trim();                                       // <-- NEW
+  const who = fromMe ? "You" : otherName;                                   // <-- NEW
+                                                                            // <-- NEW
+  if (raw.startsWith("📞") || raw.startsWith("📵")) {                        // <-- NEW
+    const s = raw.replace(/^[^\p{L}\p{N}]+/u, "");                          // <-- NEW
+    // for call logs, the SENDER is the person who placed the call          // <-- NEW
+    if (/^Missed call/i.test(s))                                            // <-- NEW
+      return fromMe ? `[You called ${otherName} but they didn't answer]`    // <-- NEW
+                    : `[${otherName} called you but you missed the call]`;  // <-- NEW
+    if (/^Call declined/i.test(s))                                          // <-- NEW
+      return fromMe ? `[You called ${otherName} and they declined]`         // <-- NEW
+                    : `[${otherName} called you and you declined]`;         // <-- NEW
+    const m = s.match(/^Call\s*·\s*(\d+:\d{2})/i);                          // <-- NEW
+    if (m) return `[Voice call between you and ${otherName}, lasted ${m[1]}]`; // <-- NEW
+  }                                                                         // <-- NEW
+  if (raw.startsWith("🎤")) return `[${who} sent a voice message]`;          // <-- NEW
+  if (raw.startsWith("🖼️")) return `[${who} sent a photo]`;                  // <-- NEW
+  if (raw.startsWith("📎")) {                                               // <-- NEW
+    const n = raw.match(/\[(.*?)\]/);                                       // <-- NEW
+    return `[${who} sent a file${n ? ": " + n[1] : ""}]`;                   // <-- NEW
+  }                                                                         // <-- NEW
+  return raw;                                                               // <-- NEW
+}                                                                           // <-- NEW
+
 app.post('/personal-assistant', requireAuth, assistantLimiter, async (req, res) => {
   const userId = req.session.user.id;
   const username = req.session.user.username;
@@ -1844,23 +1872,48 @@ app.post('/personal-assistant', requireAuth, assistantLimiter, async (req, res) 
       req.session.pendingContactChoice = null; // a new command replaces the old prompt
     }
 
-    const [conversations, unread] = await Promise.all([
+        const [conversations, unread] = await Promise.all([
       getOwnConversationsSummary(userId),
       getOwnUnreadSummary(userId)
     ]);
 
-    // Try to detect "about <name>" / "with <name>" style mentions so we can
-    // pull that contact's own message history too — still scoped to this
-    // user's own contacts only.
+    // Find which of THIS user's own contacts the question is about, so we can
+    // pull that contact's history. Scoped to the user's own contacts only.
     let contactHistoryBlock = "";
-    const nameMatch = question.match(/(?:with|about|from)\s+([a-zA-Z0-9_.]{3,20})/i);
-    if (nameMatch) {
-      const contact = await resolveOwnContactByName(userId, nameMatch[1]);
-      if (contact) {
-        const history = await getOwnMessagesWithContact(userId, contact.id);
-        contactHistoryBlock = `\n\nRecent messages with ${contact.username}:\n` +
-          history.map(m => `${m.sender_id === userId ? username : contact.username}: ${m.content}`).join("\n");
-      }
+    let mentionedContact = null;
+
+    // 1) any of THIS user's own contacts named anywhere in the question
+    const ownContacts = await getOwnContactList(userId);
+    const qNorm = question.toLowerCase().replace(/[^a-z0-9]/g, "");
+    mentionedContact = ownContacts
+      .filter(c => {
+        const u = c.username.toLowerCase().replace(/[^a-z0-9]/g, "");
+        return u.length >= 3 && qNorm.includes(u);
+      })
+      .sort((a, b) => b.username.length - a.username.length)[0] || null;
+
+    // 2) old "with/about/from <name>" pattern as a fallback (fuzzy names)
+    if (!mentionedContact) {
+      const nameMatch = question.match(/(?:with|about|from)\s+([a-zA-Z0-9_.]{3,20})/i);
+      if (nameMatch) mentionedContact = await resolveOwnContactByName(userId, nameMatch[1]);
+    }
+
+    // 3) "what did he say?" with no name → the last person talked to
+    if (!mentionedContact && /\b(he|him|his|she|her|they|them)\b/i.test(question) && req.session.lastTarget) {
+      mentionedContact = ownContacts.find(c => c.username === req.session.lastTarget) || null;
+    }
+
+    if (mentionedContact) {
+      const history = await getOwnMessagesWithContact(userId, mentionedContact.id, 30);
+      contactHistoryBlock =
+        `\n\nFull recent history with ${mentionedContact.username} (oldest to newest). ` +
+        `Lines starting with "YOU" were written by ${username}. ` +
+        `Lines starting with "${mentionedContact.username}" were written by ${mentionedContact.username}:\n` +
+        history.map(m => {
+          const fromMe = m.sender_id === userId;
+          return `${fromMe ? "YOU" : mentionedContact.username}: ` +
+                 describeMessageForAssistant(m.content, fromMe, mentionedContact.username);
+        }).join("\n");
     }
 
     // NEW — "resend the same/previous message" intent. This must be
@@ -2131,16 +2184,27 @@ app.post('/personal-assistant', requireAuth, assistantLimiter, async (req, res) 
   }
 }
 
-    const conversationsSummary = conversations
-      .map(c => `- ${c.other_username}: "${c.content}"`)
+        const conversationsSummary = conversations
+      .map(c => {
+        const fromMe = c.sender_id === userId;
+        const text = describeMessageForAssistant(c.content, fromMe, c.other_username);
+        return fromMe
+          ? `- Chat with ${c.other_username} — last message was sent by YOU: "${text}"`
+          : `- Chat with ${c.other_username} — last message was sent by ${c.other_username}: "${text}"`;
+      })
       .join("\n");
     const unreadSummary = unread
       .map(u => `${u.sender_username} (${u.unread_count} unread)`)
       .join(", ") || "none";
 
-    const prompt =
+        const prompt =
       `You are ${username}'s personal assistant. Answer their question using only ` +
-      `the context below, which is scoped to their own conversations.\n\n` +
+      `the context below, which is scoped to their own conversations.\n` +
+      `IMPORTANT: every message states who sent it. When ${username} asks what someone ` +
+      `"said to me", "sent me", or "did", report ONLY what THAT person sent or did ` +
+      `(texts, voice messages, photos, files, calls). Never describe ${username}'s own ` +
+      `messages as if the other person said them. If that person hasn't sent anything ` +
+      `recent, say so plainly.\n\n` +
       `Recent conversations:\n${conversationsSummary}\n\n` +
       `Unread messages: ${unreadSummary}` +
       contactHistoryBlock +
