@@ -1446,10 +1446,30 @@ async function rewriteDraftForRecipient(userId, { verb, prefix, rest }, history 
       history: history.slice(-4).map(h => ({ role: h.role, content: String(h.content).slice(0, 200) }))
     }, 1);
     const out = typeof r.data?.reply === "string" ? r.data.reply.trim().replace(/^["']|["']$/g, "") : "";
-    return out && out !== "..." ? out.slice(0, 1000) : fallbackDraft(verb, prefix, cleaned);
+        return out && out !== "..." ? out.slice(0, 1000) : fallbackDraft(verb, prefix, cleaned);
   } catch (e) {
     console.warn("⚠️ assistant_draft failed:", e.code || e.message);
     return fallbackDraft(verb, prefix, cleaned);
+  }
+}
+
+// NEW — fixes spelling before an assistant message is sent.
+// Falls back to the original text if the AI is down, over quota, or answers oddly.
+async function fixSpelling(userId, text) {
+  const t = (text || "").trim();
+  if (!t || t.length > 500) return t;
+  try {
+    const charge = await reserveTokens(userId, estimateTokens(t) + 60);
+    if (!charge.ok) return t;
+    const r = await callAIWithRetry({ text: t, instructions: "", mode: "spellfix" }, 1);
+    const out = typeof r.data?.reply === "string"
+      ? r.data.reply.trim().replace(/^["']|["']$/g, "")
+      : "";
+    if (!out || out === "..." || out.length > t.length * 2 + 20) return t;   // sanity check
+    return out.slice(0, 1000);
+  } catch (e) {
+    console.warn("⚠️ spellfix failed:", e.code || e.message);
+    return t;
   }
 }
 
@@ -1702,7 +1722,7 @@ function getOwnMessagesWithContact(userId, contactId, limit = 30) {
 // ================= PERSONAL ASSISTANT: SEND MESSAGE (explicit confirm required) =================
 // This is only ever called AFTER the user has tapped "Send" in the assistant
 // UI on a draft the assistant proposed. It never fires automatically.
-app.post('/personal-assistant/send', requireAuth, assistantLimiter, csrfProtection, (req, res) => {
+app.post('/personal-assistant/send', requireAuth, assistantLimiter, csrfProtection, async (req, res) => {
   const sender_id = req.session.user.id;
   const targetUsername = typeof req.body.target_username === "string" ? req.body.target_username.trim() : "";
   let content = typeof req.body.content === "string" ? req.body.content.trim() : "";
@@ -1713,6 +1733,8 @@ app.post('/personal-assistant/send', requireAuth, assistantLimiter, csrfProtecti
   if (content.length > 1000) {
     return res.status(400).json({ message: "Message too long" });
   }
+
+  content = await fixSpelling(sender_id, content);   // NEW — spelling is fixed by default
 
   const sanitize = require('sanitize-html');
   content = sanitize(content, { allowedTags: [], allowedAttributes: {}, disallowedTagsMode: 'discard' });
@@ -1752,7 +1774,7 @@ app.post('/personal-assistant/send', requireAuth, assistantLimiter, csrfProtecti
           // message" for future "send it again" requests.
                     req.session.lastDraft = content;
           req.session.lastTarget = result[0].username;   // NEW
-          res.json({ message: "Sent", receiver_id, receiver_username: result[0].username });
+                    res.json({ message: "Sent", receiver_id, receiver_username: result[0].username, content });
         }
       );
     }
