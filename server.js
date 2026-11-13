@@ -232,21 +232,22 @@ const sessionStore = new MySQLStore({
   onError: function (error) { console.error("🔥 SESSION STORE ERROR:", error); },
   clearExpired: true,
   checkExpirationInterval: 900000,
-  expiration: 86400000
+   expiration: 30 * 86400000   // 30 days
 });
 
 const sessionMiddleware = session({
   key: 'chatapp.sid',
   secret: process.env.SESSION_SECRET,
   store: sessionStore,
-  resave: false,
+    resave: false,
   saveUninitialized: false,
+  rolling: true,   // NEW: every request pushes the expiry forward
   cookie: {
     httpOnly: true,
     sameSite: "none",
     secure: true,
     path: "/",
-    maxAge: 1000 * 60 * 60 * 24
+    maxAge: 1000 * 60 * 60 * 24 * 30   // 30 days
   }
 });
 app.use(sessionMiddleware);
